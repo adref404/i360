@@ -90,6 +90,7 @@ function apiDatos(token) {
       solicitudes: leerSolicitudes_().filter(s => equipo || mio(s.bp)),
       vigencias: vigencias,
       dotacion: dotacion,
+      vac: datosVac_(equipo, u.bp),
       baseUrl: u.rol === 'admin' ? ss_().getUrl() : ''
     };
   });

@@ -28,7 +28,8 @@ function instalar() {
     ['Rol completo', 'NO', 'SI', 'Matriz con todos los instructores del mes.'],
     ['Equipo por día', 'NO', 'SI', 'Quiénes tienen actividad cada día.'],
     ['Actualizar rol', 'NO', 'SI', 'Google Sheets mensuales conectados y carga de Excel. Nunca disponible para instructores.'],
-    ['Usuarios y accesos', 'NO', 'SI', 'Códigos de acceso, sesiones e ingresos. Nunca disponible para instructores.']
+    ['Usuarios y accesos', 'NO', 'SI', 'Códigos de acceso, sesiones e ingresos. Nunca disponible para instructores.'],
+    ['Vacaciones', 'NO', 'SI', 'Ventana de solicitudes, aprobación y saldo del equipo por periodo DGAC. Cada instructor ve sus propias vacaciones en Mi rol.']
   ].forEach(f => { if (filasPer.indexOf(normTxt_(f[0])) < 0) { per.appendRow(f); log.push('Permisos: se agregó "' + f[0] + '".'); } });
 
   // Fuentes (Google Sheets mensuales)
@@ -55,6 +56,9 @@ function instalar() {
     if (filas.length) { vi.getRange(2, 1, filas.length, 4).setValues(filas); log.push('Vigencias: ' + filas.length + ' filas iniciales.'); }
   }
 
+  // Vacaciones por periodo DGAC
+  instalarVacaciones_(log);
+
   // Instrucciones
   const ins = ss.getSheetByName('Instrucciones');
   if (ins) {
@@ -63,6 +67,9 @@ function instalar() {
       ['Fuentes', 'Un Google Sheet por mes (hoja ROL INS). Se agregan desde la app (Actualizar rol › Conectar Google Sheet) o escribiendo Mes (aaaa-mm) y el enlace. Activo = NO pausa la lectura.'],
       ['Solicitudes', 'Pedidos de jefatura e instructores: BP, Nombre, Desde, Hasta, Tipo y Estado (asignado / no se asignó).'],
       ['Vigencias', 'Experiencia reciente por BP (hoja BG INS). Escribe VENCIDO en la columna programada para generar una alerta.'],
+      ['Vacaciones', 'Una fila por instructor: fechas DGAC (inicio de su periodo), derecho 2025-26 y 2026-27 y "Programado por mes 2026" (mes:días, p. ej. 11:15; 12:7) para días sin fecha exacta.'],
+      ['VacacionesDias / VacacionesBloques', 'Días de vacaciones con fecha (uno por fila) y bloques programados (desde-hasta). Las solicitudes aprobadas en la app se suman solas.'],
+      ['SolicitudesVacaciones', 'Lo llena la app cuando un instructor pide días. Coordinación aprueba o rechaza en la pestaña Vacaciones.'],
       ['Acceso a la app', 'Usuario = BP o correo corporativo. La primera vez, coordinación genera un código temporal (Usuarios y accesos) y la persona crea su contraseña. Las contraseñas no se guardan en este archivo.']
     ].forEach(f => { if (ya.indexOf(normTxt_(f[0])) < 0) ins.appendRow(f); });
   }

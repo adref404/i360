@@ -109,8 +109,8 @@ function nombreDe_(u) { return u.nombre || u.nombreCompleto || ('BP ' + u.bp); }
 
 /* ---------------- Permisos (hoja Permisos) ---------------- */
 
-const VISTAS_ORDEN_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'cargar', 'usuarios', 'mi'];
-const VISTAS_EQUIPO_ = ['ind', 'seg', 'rol', 'dia', 'inst'];
+const VISTAS_ORDEN_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'cargar', 'usuarios', 'mi'];
+const VISTAS_EQUIPO_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac'];
 function claveVista_(etiqueta, rol) {
   const t = normTxt_(etiqueta);
   if (t.indexOf('vista por instructor') === 0 || t === 'por instructor' || t === 'mi rol') return rol === 'inst' ? 'mi' : 'inst';
@@ -120,10 +120,11 @@ function claveVista_(etiqueta, rol) {
   if (t.indexOf('equipo por dia') === 0) return 'dia';
   if (t.indexOf('actualizar rol') === 0 || t.indexOf('fuentes') === 0) return 'cargar';
   if (t.indexOf('usuarios') === 0) return 'usuarios';
+  if (t.indexOf('vacaciones') === 0) return 'vac';
   return '';
 }
 function vistasDe_(rol) {
-  const def = rol === 'admin' ? ['ind', 'seg', 'rol', 'dia', 'inst', 'cargar', 'usuarios'] : ['mi'];
+  const def = rol === 'admin' ? ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'cargar', 'usuarios'] : ['mi'];
   const t = filas_(hoja_(CONFIG.hojas.permisos));
   if (!t.rows.length) return def;
   const cRol = rol === 'admin' ? col_(t.head, 'administrador', 'admin') : col_(t.head, 'instructor');
@@ -136,7 +137,7 @@ function vistasDe_(rol) {
     if (!k) return;
     set[k] = normTxt_(r[cRol]) === 'si';
   });
-  if (rol !== 'admin') { delete set.cargar; delete set.usuarios; } // nunca para instructores
+  if (rol !== 'admin') { delete set.cargar; delete set.usuarios; delete set.vac; } // nunca para instructores (sus vacaciones están en Mi rol)
   if (rol === 'admin') set.usuarios = true;                         // evita que coordinación se quede fuera
   if (rol === 'inst' && !Object.keys(set).some(k => set[k])) set.mi = true;
   return VISTAS_ORDEN_.filter(k => set[k]);

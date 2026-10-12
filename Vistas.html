@@ -11,15 +11,17 @@ const fmtF = f => f.toLocaleDateString("es-PE",{day:"numeric",month:"short"});
 function vistaUsuario(bp, desdeAdmin){
   const pe=MO.personas[bp];
   if(!pe) return `<div class="card empty-state"><h2>Sin rol publicado</h2><p class="hint">No encontramos el BP ${esc(bp)} en los roles cargados. Si crees que es un error, avisa a coordinación.</p></div>`;
-  const mes=S.mes, mi=mesInfo(mes), y=String(mi.y);
+  const mes=S.mes, mi=mesInfo(mes);
   const propio = !desdeAdmin && S.usuario.bp===bp;
+  /* mesF: mes con rol para las cifras del Freeze (si el mes elegido no tiene rol, el más cercano) */
+  const mesF = MO.orden.includes(mes) ? mes : (mes>mesUltimo() ? mesUltimo() : MO.orden[0]); const miF=mesInfo(mesF);
   const enMes = !!pe.meses[mes];
-  const mesesY=mesesDelAnio(mes);
-  const sM=ST(bp,[mes]), anio=anioHasta(mes), sA=ST(bp,anio), sY=ST(bp,mesesY);
-  // vacaciones: todo el año del mes elegido
-  const vacUsadas=sY.vacPasada, vacProg=sY.vacFutura, vacTot=sY.vac, saldo=30-vacTot;
-  const pRing=Math.min(100,vacTot/30*100);
-  // vuelos por mes del año
+  const mesesY=mesesDelAnio(mesF);
+  const sM=ST(bp,[mesF]), anio=anioHasta(mesF), sA=ST(bp,anio), sY=ST(bp,mesesY), sMc=ST(bp,[mes]);
+  /* vacaciones: periodo DGAC vigente */
+  const vpU=vacPersona(bp); const pU=vpU?periodoVac(vpU,anioVig(vpU,HOY),HOY,extraDe(bp)):null;
+  const pRing=pU&&pU.der?Math.min(100,pU.tom/pU.der*100):0; const libresU=pU?pU.der-pU.tom-pU.prog-pU.sol:0;
+  /* vuelos por mes del año */
   const porMes=mesesY.map(m=>({m,n:pe.meses[m]?ST(bp,[m]).vin:null, h:pe.meses[m]?ST(bp,[m]).vha:0}));
   const maxV=Math.max(4,...porMes.map(x=>(x.n||0)+x.h));
   if(S.uFiltroMes && !mesesY.includes(S.uFiltroMes)) S.uFiltroMes=null;
@@ -32,89 +34,86 @@ function vistaUsuario(bp, desdeAdmin){
     <button class="fl-i" ${drill(()=>abrirDia(bp,r.mes,r.d))}><span class="dd num">${r.d}<small>${DOWS[dowOf(r.mes,r.d)]} ${mesCorto(r.mes)}</small></span>
     <span><span class="t">${esc(r.x.titulo)}</span>${r.x.meta?`<br><span class="m">${esc(r.x.meta.split("\n").slice(0,2).join(" · "))}</span>`:""}</span>
     <span class="row" style="gap:6px;justify-content:flex-end">${r.x.pernocta?`<span class="viatico-tag">Viático</span>`:""}<span class="chipk">${sw(r.x.k)}${r.x.k==="VIN"?(r.x.wb?"WB":r.x.nb?"NB":"INS"):"Propio"}</span></span></button>`).join("")).join("")
-    : `<p class="empty">No hay vuelos ${S.uTipo==="ins"?"de instrucción ":S.uTipo==="pro"?"propios ":""}registrados ${filtroM?"en "+mesLargo(filtroM):"de enero a "+mi.nombre}.</p>`;
-  // vacaciones rangos
-  const rv=rangos(sY.reg.filter(r=>r.x.k==="VAC"));
-  const cells=Array.from({length:30},(_,k)=>`<span class="${k<vacUsadas?"u":k<vacTot?"f":""}"></span>`).join("");
-  // otras actividades de enero al mes
+    : `<p class="empty">No hay vuelos ${S.uTipo==="ins"?"de instrucción ":S.uTipo==="pro"?"propios ":""}registrados ${filtroM?"en "+mesLargo(filtroM):"de enero a "+miF.nombre}.</p>`;
+  /* otras actividades de enero al mes */
   const otras=[["IET","Iniciales"],["IET","RTI (recurrentes)"],["IET","Revas de servicio"],["IET","Prácticas en avión o maqueta"],["IET","Cursos a tripulantes"],["IET","Talleres, CRM y realidad virtual"],["IET","Otras actividades de tierra"],["RES",null],["AUD",null],["GES",null],["VHA",null],["BLA",null],["CUM",null],["DM",null],["LIC",null]]
     .map(([k,sub])=>({k,lab:sub||KC[k].corto,n: sub? (sA.sub[sub]||0) : (sA.cnt[k]||0), regs:()=>sA.reg.filter(r=>r.x.k===k && (!sub||r.x.sub===sub))})).filter(o=>o.n>0);
   const maxO=Math.max(1,...otras.map(o=>o.n));
-  // calendario del mes
-  const r=respDe(bp,mes); const obsDias=new Set((r&&r.obs||[]).filter(o=>o.estado!=="resuelta").map(o=>o.dia));
+  /* confirmación del rol del mes elegido */
+  const r=respDe(bp,mes);
   const p=pe.meses[mes]||[];
-  const tiles=[]; const off=(dowOf(mes,1)+6)%7; for(let k=0;k<off;k++) tiles.push("<div></div>");
   const esHoyMes=HOY.getFullYear()===mi.y&&HOY.getMonth()+1===mi.m;
-  p.forEach((x,k)=>{ const d=k+1; tiles.push(`<button class="tile k-${x.k} ${esHoyMes&&HOY.getDate()===d?"today":""} ${obsDias.has(d)?"has-obs":""}" ${drill(()=>abrirDia(bp,mes,d))} aria-label="${d}: ${esc(x.titulo)}"><span class="d num">${d}</span><span class="c"><span>${esc(x.code)}</span><small>${["SIN","DO","VAC","FER"].includes(x.k)?"":esc(x.k==="VIN"?"INS":x.k)}</small></span>${x.pernocta?`<i class="v"></i>`:""}</button>`); });
   const editable = esEditable(mes);
   const conf = !enMes || !editable ? "" : r&&r.confirmado
     ? `<div class="card row"><span class="pill good"><i></i>Rol de ${mi.nombre} confirmado</span><span class="hint">${fechaCorta(r.confirmadoAt)}</span></div>`
     : !propio ? `<div class="card row"><span class="pill warn"><i></i>Aún no confirma su rol de ${mi.nombre}</span></div>`
     : `<div class="card stack" style="gap:10px"><h3>¿Revisaste tu rol de ${mi.nombre}?</h3><p class="hint">Confírmalo para que coordinación sepa que lo viste. Si algo no calza, toca el día y avísanos.</p>
        <div class="row"><button class="btn primary" data-act="confirmar">Confirmo mi rol</button><button class="btn" data-act="obsGeneral">Algo no calza</button></div></div>`;
-  const sols=MO.solicitudes.filter(x=>x.bp===bp && x.desde.startsWith(y)).slice().sort((a,b)=>b.desde.localeCompare(a.desde));
-  const pv=(()=>{ if(mes<mesHoy()) return null; let desde=1; if(esHoyMes) desde=HOY.getDate(); for(let d=desde; d<=p.length; d++){ if(p[d-1].k==="VIN"||p[d-1].k==="VHA") return {d,x:p[d-1]}; } return null; })();
+  const sols=MO.solicitudes.filter(x=>x.bp===bp && x.desde.startsWith(String(miF.y))).slice().sort((a,b)=>b.desde.localeCompare(a.desde));
+  const pv=(()=>{ if(!enMes || mes<mesHoy()) return null; let desde=1; if(esHoyMes) desde=HOY.getDate(); for(let d=desde; d<=p.length; d++){ if(p[d-1].k==="VIN"||p[d-1].k==="VHA") return {d,x:p[d-1]}; } return null; })();
   const M=MO.meses[mes]||{};
+  /* calendario: rol del mes si existe; si no, la capa de vacaciones (y la selección cuando la ventana está abierta) */
+  const C=calHTML(bp,mes,desdeAdmin); const enFreeze=C.conRol;
+  const titulo = enFreeze ? `${propio?"Tu rol":"Rol"} de ${mi.nombre}` : `${propio?"Tu":"Su"} ${mi.nombre} ${mi.y}`;
+  const nota = enFreeze ? "" : MO.orden.includes(mes) ? `No figura en el rol de ${mesLargo(mes)}. Aquí se ven las vacaciones de ese mes.` : mes>mesUltimo() ? "El rol de este mes aún no se publica. Aquí ves las vacaciones tomadas, programadas y solicitadas." : "Mes sin rol cargado. Aquí ves las vacaciones de ese mes.";
+  const stripCls = k => ({SEL:"k-SEL",VAC:"k-VAC",VACP:"k-VACP",SOL:"k-SOL",NO:"k-NO"})[k] || "k-"+k;
 
   return `
   <div class="pagehead"><div>${desdeAdmin?`<span class="eyebrow">Información del instructor</span>`:`<span class="eyebrow">Mi información · Freeze ${mi.y}</span>`}<h1>${esc(pe.nombre)}</h1>
-    <p class="sub">${pe.flota?`Flotas ${esc(pe.flota)} · `:""}<span class="mono">BP ${esc(bp)}</span></p></div>${mesNav()}</div>
-  ${!enMes?`<div class="card" style="margin-bottom:16px">No figuras en el rol de ${mesLargo(mes)}. Elige otro mes.</div>`:""}
+    <p class="sub">${pe.flota?`Flotas ${esc(pe.flota)} · `:""}<span class="mono">BP ${esc(bp)}</span></p></div>${mesNav(mesesUsuario())}</div>
   <div class="u-kpis">
-    <button class="kpi" ${drill(()=>abrirDrill(`Vuelos de instrucción · ${esc(pe.nombre)}`,`${mesLargo(mes)}`,sM.reg.filter(r=>r.x.k==="VIN")))}>
-      <span class="l">Vuelos como instructor en ${mi.nombre}</span><span class="v num">${sM.vin}</span>
-      <span class="d">${sA.vin} de enero a ${mi.nombre}${sM.vinWB||sM.vinNB?` · ${sM.vinWB} WB · ${sM.vinNB} NB`:""}</span><span class="go">Ver detalle</span></button>
+    <button class="kpi" ${drill(()=>abrirDrill(`Vuelos de instrucción · ${esc(pe.nombre)}`,`${mesLargo(mesF)}`,sM.reg.filter(r=>r.x.k==="VIN")))}>
+      <span class="l">Vuelos como instructor en ${miF.nombre}</span><span class="v num">${sM.vin}</span>
+      <span class="d">${sA.vin} de enero a ${miF.nombre}${sM.vinWB||sM.vinNB?` · ${sM.vinWB} WB · ${sM.vinNB} NB`:""}</span><span class="go">Ver detalle</span></button>
     <div class="kpi kvac" style="flex-direction:row;align-items:center;gap:14px">
-      <div class="ring" style="--p:${pRing}" aria-hidden="true"><div><b class="num">${vacTot}</b><small>de 30</small></div></div>
-      <div><span class="l">Vacaciones ${mi.y}</span><div class="d" style="margin-top:4px">${vacUsadas} tomados · ${vacProg} programados</div>
-      <div style="font:700 20px/1.2 var(--f-display);margin-top:4px;color:${saldo<0?"var(--warn)":"var(--ink)"}">${saldo>=0?`Saldo: ${saldo} días`:`${-saldo} días sobre los 30`}</div></div></div>
-    <button class="kpi" ${drill(()=>abrirDrill(`Viajes con viático · ${esc(pe.nombre)}`,`Enero a ${mi.nombre} ${mi.y}`,sA.reg.filter(r=>r.x.pernocta&&(r.x.k==="VIN"||r.x.k==="VHA"))))}>
-      <span class="l">Viajes con viático (ene–${mesCorto(mes)})</span><span class="v num">${sA.viajes}</span><span class="d">${sM.viajes} en ${mi.nombre} · pernocta fuera de Lima</span><span class="go">Ver viajes</span></button>
-    <button class="kpi" ${drill(()=>abrirDrill(`Instrucción en tierra · ${esc(pe.nombre)}`,mesLargo(mes),sM.reg.filter(r=>["IET","RES","AUD"].includes(r.x.k))))}>
-      <span class="l">Días de tierra en ${mi.nombre}</span><span class="v num">${(sM.cnt.IET||0)+(sM.cnt.RES||0)+(sM.cnt.AUD||0)}</span>
+      ${pU?`<div class="ring" style="--p:${pRing}" aria-hidden="true"><div><b class="num">${Math.max(0,pU.der-pU.tom)}</b><small>por tomar</small></div></div>
+      <div><span class="l">Vacaciones · periodo ${pU.etiqueta}</span><div class="d" style="margin-top:4px">${pU.tom} tomados de ${pU.der} · ${pU.prog+pU.sol} programados</div>
+      <div style="font:700 20px/1.2 var(--f-display);margin-top:4px;color:${libresU<0?"var(--crit)":"var(--ink)"}">${libresU>=0?`${libresU} por programar`:`Excede en ${-libresU} días`}</div></div>`
+      :`<div><span class="l">Vacaciones</span><div class="d">Sin datos en la hoja Vacaciones.</div></div>`}</div>
+    <button class="kpi" ${drill(()=>abrirDrill(`Viajes con viático · ${esc(pe.nombre)}`,`Enero a ${miF.nombre} ${miF.y}`,sA.reg.filter(r=>r.x.pernocta&&(r.x.k==="VIN"||r.x.k==="VHA"))))}>
+      <span class="l">Viajes con viático (ene–${mesCorto(mesF)})</span><span class="v num">${sA.viajes}</span><span class="d">${sM.viajes} en ${miF.nombre} · pernocta fuera de Lima</span><span class="go">Ver viajes</span></button>
+    <button class="kpi" ${drill(()=>abrirDrill(`Instrucción en tierra · ${esc(pe.nombre)}`,mesLargo(mesF),sM.reg.filter(r=>["IET","RES","AUD"].includes(r.x.k))))}>
+      <span class="l">Días de tierra en ${miF.nombre}</span><span class="v num">${(sM.cnt.IET||0)+(sM.cnt.RES||0)+(sM.cnt.AUD||0)}</span>
       <span class="d">${sM.cnt.IET||0} instrucción · ${sM.cnt.RES||0} reserva · ${sM.cnt.AUD||0} auditoría</span><span class="go">Ver días</span></button>
   </div>
+  ${mesF!==mes?`<p class="hint" style="margin-top:8px">${mesLargo(mes)} no tiene rol publicado: las cifras de vuelos y tierra son de ${mesLargo(mesF)}.</p>`:""}
 
-  ${enMes?`<div class="grid2" style="margin-top:16px">
-    <div class="card stack">
-      <div class="row between"><h2>${propio?"Tu rol":"Rol"} de ${mi.nombre}</h2>${pv?`<span class="hint">Próximo vuelo: <b>${DOW[dowOf(mes,pv.d)]} ${pv.d}</b>, ${esc(pv.x.titulo)}</span>`:""}</div>
-      <div><div class="strip" aria-hidden="true">${p.map(x=>`<span class="k-${x.k}"></span>`).join("")}</div><div class="strip-ax"><span>1 ${mesCorto(mes)}</span><span>15</span><span>${p.length} ${mesCorto(mes)}</span></div></div>
-      <div class="cal">${["lun","mar","mié","jue","vie","sáb","dom"].map(d=>`<div class="dow">${d}</div>`).join("")}${tiles.join("")}</div>
-      ${codesHTML()}
+  ${vacResumenHTML(bp,desdeAdmin)}
+  <div class="grid2" style="margin-top:16px">
+    <div class="card stack" id="calRol">
+      <div class="row between"><h2>${titulo}</h2>${enFreeze&&pv?`<span class="hint">Próximo vuelo: <b>${DOW[dowOf(mes,pv.d)]} ${pv.d}</b>, ${esc(pv.x.titulo)}</span>`:nota?`<span class="hint" style="max-width:46ch">${nota}</span>`:""}</div>
+      ${C.sel?`<div class="selmode">✓ Solicitud habilitada · toca los días libres que quieres pedir como vacaciones</div>`:""}
+      <div><div class="strip" aria-hidden="true">${C.strip.map(k=>`<span class="${stripCls(k)}"></span>`).join("")}</div><div class="strip-ax"><span>1 ${mesCorto(mes)}</span><span>15</span><span>${mi.dias} ${mesCorto(mes)}</span></div></div>
+      ${C.sinF.length?`<div class="note">Hay ${plural(C.sinF[0].n,"día")} de vacaciones programados en ${mi.nombre} sin fecha exacta en la hoja.</div>`:""}
+      <div class="cal">${["lun","mar","mié","jue","vie","sáb","dom"].map(d=>`<div class="dow">${d}</div>`).join("")}${C.tiles}</div>
+      ${enFreeze?codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
+      ${enFreeze?`<div style="border-top:1px solid var(--line);padding-top:12px"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sMc)}</div>`:""}
     </div>
-    <div class="stack">${conf}${obsBlock(bp,r,!propio)}
-      <div class="card"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sM)}</div>
-    </div>
-  </div>`:""}
+    <div class="stack rol-side">${enFreeze?conf+obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${vacHistHTML(bp)}</div>
+  </div>
   <div class="u-grid" style="margin-top:16px">
     <div class="stack">
       <div class="card">
-        <div class="chart-title"><div><h3>Vuelos por mes · ${mi.y}</h3><p>Toca un mes para filtrar el historial. Tócalo de nuevo para quitar el filtro.</p></div>
+        <div class="chart-title"><div><h3>Vuelos por mes · ${miF.y}</h3><p>Toca un mes para filtrar el historial. Tócalo de nuevo para quitar el filtro.</p></div>
           <div class="legend"><span>${sw("VIN")}Instrucción</span><span>${sw("VHA")}Propios</span></div></div>
-        ${colsChart(porMes.map(x=>({lab:mesCorto(x.m),sel:x.m===mes,act:filtroM===x.m, total:(x.n||0)+x.h, segs:x.n===null?[]:[["VIN",x.n],["VHA",x.h]], tip:`<b>${mesLargo(x.m)}</b><br>${x.n===null?"Sin rol":`${x.n} de instrucción · ${x.h} propios`}`, click:()=>{ S.uFiltroMes = S.uFiltroMes===x.m?null:x.m; render(); }})), maxV, true)}
+        ${colsChart(porMes.map(x=>({lab:mesCorto(x.m),sel:x.m===mesF,act:filtroM===x.m, total:(x.n||0)+x.h, segs:x.n===null?[]:[["VIN",x.n],["VHA",x.h]], tip:`<b>${mesLargo(x.m)}</b><br>${x.n===null?"Sin rol":`${x.n} de instrucción · ${x.h} propios`}`, click:()=>{ S.uFiltroMes = S.uFiltroMes===x.m?null:x.m; render(); }})), maxV, true)}
       </div>
       <div class="card">
-        <div class="row between" style="margin-bottom:8px"><h3>Historial de vuelos · ${filtroM?mesLargo(filtroM):`enero a ${mi.nombre} ${mi.y}`}</h3>
+        <div class="row between" style="margin-bottom:8px"><h3>Historial de vuelos · ${filtroM?mesLargo(filtroM):`enero a ${miF.nombre} ${miF.y}`}</h3>
           <div class="row" style="gap:6px">${filtroM?`<button class="btn sm" data-ufm="">Quitar filtro</button>${filtroM!==mes?`<button class="btn sm" data-irmes="${filtroM}">Ir a ${mesInfo(filtroM).nombre}</button>`:""}`:""}</div></div>
         <div class="seg" role="group" aria-label="Tipo de vuelo" style="margin-bottom:8px"><button aria-pressed="${S.uTipo==="todos"}" data-utipo="todos">Todos</button><button aria-pressed="${S.uTipo==="ins"}" data-utipo="ins">Instrucción</button><button aria-pressed="${S.uTipo==="pro"}" data-utipo="pro">Propios</button></div>
         <div class="fl scroll">${flHTML}</div>
       </div>
     </div>
     <div class="stack">
-      <div class="card stack" style="gap:12px">
-        <div class="chart-title" style="margin:0"><div><h3>Vacaciones ${mi.y}</h3><p>Cada casilla es un día de los 30 anuales. Las rayadas están programadas y aún no se toman.</p></div></div>
-        <div class="cells30" aria-label="${vacTot} de 30 días">${cells}</div>
-        ${vacTot>30?`<div class="note">Hay ${vacTot} días de vacaciones en el rol de este año, más que los 30 anuales. Es probable que incluyan saldo de periodos anteriores, que el Freeze no registra. Confírmalo con coordinación.</div>`:""}
-        <div class="fl">${rv.length?rv.map(x=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${fmtF(x.desde)}${x.n>1?` al ${fmtF(x.hasta)}`:""}</span></span><span class="row" style="gap:6px"><b class="num">${x.n} día${x.n>1?"s":""}</b><span class="pill ${x.desde>HOY?"info":"good"}">${x.desde>HOY?"Programadas":"Tomadas"}</span></span></div>`).join(""):`<p class="empty">No hay vacaciones registradas en ${mi.y}.</p>`}</div>
-      </div>
       <div class="card">
-        <div class="chart-title"><div><h3>Otras actividades de enero a ${mi.nombre}</h3><p>Días por tipo. Toca una barra para ver las fechas.</p></div></div>
-        ${otras.length?`<div class="rank">${otras.map(o=>`<div class="rowhit" ${drill(()=>abrirDrill(`${esc(o.lab)} · ${esc(pe.nombre)}`,`Enero a ${mi.nombre} ${mi.y}`,o.regs()))}><span class="nm">${esc(o.lab)}</span><span class="track"><span class="bar" style="width:${o.n/maxO*100}%;background:${KC[o.k].color}"></span></span><span class="val num">${o.n}</span></div>`).join("")}</div>`:`<p class="empty">Sin otras actividades en el periodo.</p>`}
+        <div class="chart-title"><div><h3>Otras actividades de enero a ${miF.nombre}</h3><p>Días por tipo. Toca una barra para ver las fechas.</p></div></div>
+        ${otras.length?`<div class="rank">${otras.map(o=>`<div class="rowhit" ${drill(()=>abrirDrill(`${esc(o.lab)} · ${esc(pe.nombre)}`,`Enero a ${miF.nombre} ${miF.y}`,o.regs()))}><span class="nm">${esc(o.lab)}</span><span class="track"><span class="bar" style="width:${o.n/maxO*100}%;background:${KC[o.k].color}"></span></span><span class="val num">${o.n}</span></div>`).join("")}</div>`:`<p class="empty">Sin otras actividades en el periodo.</p>`}
       </div>
-      ${sols.length?`<div class="card"><h3 style="margin-bottom:6px">Solicitudes ${mi.y}</h3><div class="fl">${sols.map(x=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${esc(x.tipo)}</span><br><span class="m">${fmtISO(x.desde)}${x.hasta&&x.hasta!==x.desde?" al "+fmtISO(x.hasta):""}</span></span><span class="pill ${x.estado==="asignado"?"good":x.estado==="no se asignó"?"crit":""}">${x.estado==="asignado"?"Asignada":x.estado==="no se asignó"?"No se asignó":"Sin respuesta"}</span></div>`).join("")}</div></div>`:""}
+      ${sols.length?`<div class="card"><h3 style="margin-bottom:6px">Solicitudes de jefatura ${miF.y}</h3><div class="fl">${sols.map(x=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${esc(x.tipo)}</span><br><span class="m">${fmtISO(x.desde)}${x.hasta&&x.hasta!==x.desde?" al "+fmtISO(x.hasta):""}</span></span><span class="pill ${x.estado==="asignado"?"good":x.estado==="no se asignó"?"crit":""}">${x.estado==="asignado"?"Asignada":x.estado==="no se asignó"?"No se asignó":"Sin respuesta"}</span></div>`).join("")}</div></div>`:""}
     </div>
   </div>
-  <p class="foot">Datos de ${mesLargo(mes)}: ${esc(M.fuente||"—")}${M.hoja?`, hoja ${esc(M.hoja)}`:""}${M.actualizadoAt?` · actualizado ${fechaLarga(M.actualizadoAt)}`:""}. Las vacaciones se cuentan en días calendario sobre una base de 30 días anuales.</p>`;
+  <p class="foot">Datos de ${mesLargo(mesF)}: ${esc((MO.meses[mesF]||{}).fuente||"—")}${(MO.meses[mesF]||{}).hoja?`, hoja ${esc(MO.meses[mesF].hoja)}`:""}${(MO.meses[mesF]||{}).actualizadoAt?` · actualizado ${fechaLarga(MO.meses[mesF].actualizadoAt)}`:""}. Vacaciones: ${esc(VAC().fuente||"hoja Vacaciones")}, por periodo DGAC de cada instructor.</p>`;
 }
 function statsBlock(s){
   return `<div class="legend" style="gap:8px 16px">${TODAS.filter(k=>s.cnt[k]).map(k=>`<span>${sw(k)}<b class="num" style="font:700 20px/1 var(--f-display);color:var(--ink)">${s.cnt[k]}</b>${KC[k].corto}</span>`).join("")}</div>`;
@@ -253,5 +252,5 @@ function abrirObsGeneral(bp){
   setTimeout(()=>$("#ogTxt",sc).focus(),30);
 }
 
-window.__archivos=(window.__archivos||{}); window.__archivos["Vistas"]="v2.3";
+window.__archivos=(window.__archivos||{}); window.__archivos["Vistas"]="v2.4";
 </script>

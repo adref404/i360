@@ -43,14 +43,14 @@ const TODAS = ["VIN","AUD","IET","RES","VHA","GES","BLA","VAC","DM","LIC","CUM",
 const sw = k => `<i class="sw ${k==="DO"?"do":""}" style="background:${KC[k].color}${k==="SIN"||k==="BLA"?";box-shadow:inset 0 0 0 1px var(--line-2)":""}"></i>`;
 const ICON_PLANE = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>`;
 
-const TAB_NOMBRE = {ind:"Indicadores", seg:"Seguimiento del mes", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", cargar:"Actualizar rol", usuarios:"Usuarios y accesos", mi:"Mi rol"};
+const TAB_NOMBRE = {ind:"Indicadores", seg:"Seguimiento del mes", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", vac:"Vacaciones", cargar:"Actualizar rol", usuarios:"Usuarios y accesos", mi:"Mi rol"};
 
 /* ============ Estado ============ */
 const S = {
   token:null, usuario:null, vistas:[], equipo:false, hoy:null, baseUrl:"",
   resp:{}, mes:null, modo:"anio", vVuelo:"tasa", distModo:"pct",
   tab:null, uFiltroMes:null, uTipo:"todos", dia:null, filtro:null, busca:"", verBp:null, segFiltro:"pend",
-  xlsxPrev:null, fuentes:null, fuentesMsg:"", fuentesCargando:false, adm:null, admCargando:false, buscaU:"", filtroU:"todos",
+  xlsxPrev:null, vac:null, selVac:new Set(), fuentes:null, fuentesMsg:"", fuentesCargando:false, adm:null, admCargando:false, buscaU:"", filtroU:"todos",
   login:{modo:"login", usuario:"", err:"", ok:"", google:""}, listo:false
 };
 let MO = construirModelo({meses:[]});
@@ -140,6 +140,7 @@ async function cargarDatos(mantener){
 function aplicarDatos(P, mantener){
   S.usuario=P.usuario; S.vistas=P.usuario.vistas||[]; S.equipo=!!P.usuario.equipo; S.hoy=P.hoy; S.baseUrl=P.baseUrl||"";
   S.resp=P.respuestas||{};
+  S.vac=P.vac||{personas:{}, solicitudes:[], cfg:null, ventanaUltima:null, fuente:""}; resetVac();
   const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
   MO=construirModelo(P); STC={};
   if(!mantener || !MO.orden.includes(S.mes)) S.mes=mesInicial();
@@ -160,7 +161,8 @@ async function recargar(){ STC={}; await cargarDatos(true); }
 function pintarCabecera(){
   const top=$("#topMes"), who=$("#who");
   if(!S.usuario){ top.textContent="Instructores LP"; who.innerHTML=""; return; }
-  if(S.mes) top.textContent = S.equipo ? `Freeze ${mesLargo(S.mes)} · ${rosterMes(S.mes).length} instructores` : `Freeze ${mesLargo(S.mes)}`;
+  const mT = S.mes && MO.orden.includes(S.mes) ? S.mes : mesInicial();
+  if(mT) top.textContent = S.equipo ? `Freeze ${mesLargo(mT)} · ${rosterMes(mT).length} instructores` : `Freeze ${mesLargo(mT)}`;
   else top.textContent="Instructores LP";
   const u=S.usuario, ini=(u.nombre||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
   who.innerHTML=`<details class="menu" id="menuCuenta"><summary aria-label="Tu cuenta"><span class="avatar">${esc(ini)}</span><span class="lbl" style="font-weight:600;color:var(--ink)">${esc(u.nombre)}</span><span class="pill ${u.rol==="admin"?"acc":"info"} lbl" style="padding:1px 8px">${esc(u.rolTxt)}</span></summary>
@@ -171,7 +173,7 @@ function pintarCabecera(){
 function render(){
   window.__appIniciada=true;
   DR={}; drn=0; $("#tip").hidden=true;
-  if(S.usuario && S.listo && S.mes) asignarPerfiles(MO, S.mes.slice(0,4));
+  if(S.usuario && S.listo && S.mes){ const mP = MO.orden.includes(S.mes) ? S.mes : mesInicial(); if(mP) asignarPerfiles(MO, mP.slice(0,4)); }
   pintarCabecera();
   const app=$("#app");
   if(!S.usuario) app.innerHTML=vistaLogin();
@@ -179,13 +181,17 @@ function render(){
   else app.innerHTML=vistaShell();
   wire();
 }
-function mesNav(){
-  const i=MO.orden.indexOf(S.mes), h=mesHoy();
+/* Meses navegables: en Mi rol y Por instructor, todos los meses (para ver vacaciones aunque no haya rol); en el resto, solo los meses con rol */
+const vistaPersona = () => S.tab==="inst" || S.tab==="mi" || (S.vistas.length===1 && S.vistas[0]==="mi");
+const listaMesesActual = () => vistaPersona() ? mesesUsuario() : MO.orden;
+function mesNav(lista){
+  lista = lista || MO.orden;
+  const i=lista.indexOf(S.mes), h=mesHoy(), conRol=lista!==MO.orden;
   return `<div class="mesnav" role="group" aria-label="Mes"><button data-messtep="-1" ${i<=0?"disabled":""} aria-label="Mes anterior">‹</button>
-    <select id="selMes" aria-label="Elegir mes">${MO.orden.map(m=>`<option value="${m}" ${m===S.mes?"selected":""}>${mesLargo(m)}${m===h?" · en curso":m>h?" · próximo":""}</option>`).join("")}</select>
-    <button data-messtep="1" ${i>=MO.orden.length-1?"disabled":""} aria-label="Mes siguiente">›</button></div>`;
+    <select id="selMes" aria-label="Elegir mes">${lista.map(m=>`<option value="${m}" ${m===S.mes?"selected":""}>${mesLargo(m)}${m===h?" · en curso":(!conRol&&m>h)?" · próximo":""}</option>`).join("")}</select>
+    <button data-messtep="1" ${i>=lista.length-1?"disabled":""} aria-label="Mes siguiente">›</button></div>`;
 }
-function irAMes(m){ if(!MO.orden.includes(m)) return; S.mes=m; S.uFiltroMes=null; S.dia=null; render(); }
+function irAMes(m){ if(!listaMesesActual().includes(m)) return; S.mes=m; S.uFiltroMes=null; S.dia=null; render(); }
 
 /* ============ Inicio de sesión ============ */
 function campoClave(id, label, auto, extra){
@@ -285,13 +291,13 @@ function entrar(r){
   guardarToken(r.token, r.recordar);
   S.token=r.token; S.usuario=r.usuario; S.listo=false;
   S.login={modo:"login", usuario:"", err:"", ok:"", google:S.login.google};
-  S.tab=null; S.fuentes=null; S.adm=null; S.verBp=null; S.xlsxPrev=null;
+  S.tab=null; S.fuentes=null; S.adm=null; S.verBp=null; S.xlsxPrev=null; S.selVac.clear();
   cargarDatos(false); scrollTo(0,0);
 }
 async function salir(){
   const t=S.token;
   borrarToken(); S.token=null; S.usuario=null; S.listo=false; S.vistas=[];
-  S.login={modo:"login", usuario:"", err:"", ok:"Cerraste tu sesión.", google:S.login.google};
+  S.login={modo:"login", usuario:"", err:"", ok:"Cerraste tu sesión.", google:S.login.google}; S.selVac.clear(); S.vac=null;
   render();
   try{ await api("apiLogout",t,dispositivo()); }catch(e){}
 }
@@ -331,6 +337,7 @@ function vistaShell(){
     return vistaUsuario(S.usuario.bp,false);
   }
   const conMes=["ind","seg","rol","dia"].includes(S.tab);
+  if(!vistaPersona() && S.mes && !MO.orden.includes(S.mes)) S.mes=mesInicial();
   let body="";
   if(sinDatos && !["cargar","usuarios"].includes(S.tab)) body=vacioRol();
   else if(S.tab==="ind") body=admIndicadores();
@@ -340,6 +347,7 @@ function vistaShell(){
   else if(S.tab==="inst") body=admInst();
   else if(S.tab==="cargar") body=admCargar();
   else if(S.tab==="usuarios") body=admUsuarios();
+  else if(S.tab==="vac") body=admVac();
   else if(S.tab==="mi") body=vistaUsuario(S.usuario.bp,false);
   const titulo = S.tab==="ind"?"Indicadores del Freeze" : conMes? `Rol de ${mesInfo(S.mes).nombre} ${mesInfo(S.mes).y}` : TAB_NOMBRE[S.tab];
   const encabezado = ["inst","mi"].includes(S.tab) ? "" :
@@ -357,7 +365,8 @@ function wire(){
   if(!S.usuario){ wireLogin(); return; }
   document.querySelectorAll("#app [data-drill]").forEach(el=>el.addEventListener("click",e=>{ e.stopPropagation(); const f=DR[el.dataset.drill]; if(f) f(); }));
   const sm=$("#selMes"); if(sm) sm.onchange=()=>irAMes(sm.value);
-  document.querySelectorAll("[data-messtep]").forEach(b=>b.onclick=()=>{ const i=MO.orden.indexOf(S.mes)+Number(b.dataset.messtep); if(MO.orden[i]) irAMes(MO.orden[i]); });
+  document.querySelectorAll("[data-messtep]").forEach(b=>b.onclick=()=>{ const L=listaMesesActual(); const i=L.indexOf(S.mes)+Number(b.dataset.messtep); if(L[i]) irAMes(L[i]); });
+  wireVac();
   document.querySelectorAll("[data-atab]").forEach(b=>b.onclick=()=>{ S.tab=b.dataset.atab; if(S.tab==="cargar"){ S.fuentes=null; S.fuentesMsg=""; } if(S.tab==="usuarios") S.adm=null; render(); });
   document.querySelectorAll("[data-modo]").forEach(b=>b.onclick=()=>{ S.modo=b.dataset.modo; render(); });
   document.querySelectorAll("[data-vv]").forEach(b=>b.onclick=()=>{ S.vVuelo=b.dataset.vv; render(); });
@@ -422,5 +431,5 @@ document.addEventListener("click",e=>{
   document.addEventListener("scroll",()=>tip.hidden=true,true); })();
 function toast(t){ const d=document.createElement("div"); d.className="toast"; d.setAttribute("role","status"); d.textContent=t; document.body.appendChild(d); setTimeout(()=>d.remove(),3200); }
 
-window.__archivos=(window.__archivos||{}); window.__archivos["App"]="v2.3";
+window.__archivos=(window.__archivos||{}); window.__archivos["App"]="v2.4";
 </script>

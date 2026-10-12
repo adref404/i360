@@ -54,12 +54,14 @@ function alertas(I){
   if(audT>=5 && aud.length<=I.C.length*0.4) out.push({sev:"info", ev:"Dato", titulo:`Auditoría e IOSA en ${aud.length} personas`,
     texto:`${audT} días de auditoría recaen en ${aud.map(r=>r.pe.nombre.split(" ")[0]).join(", ")}. Puede responder a la certificación de auditor; revisa si conviene ampliar el grupo.`, tags:["Auditoría"],
     fn:()=>abrirDrill("Auditoría e IOSA",periodoTxt(),regsDe(aud.map(r=>r.pe.bp),per,x=>x.x.k==="AUD"))});
-  // Vacaciones: siempre sobre el año completo del mes elegido
-  const anio=mesesDelAnio(S.mes), y=mesInfo(S.mes).y;
-  Object.values(MO.personas).forEach(pe=>{ const s=ST(pe.bp,anio); if(!s.presente) return;
-    if(s.vac>30) out.push({sev:"info", ev:"Dato", titulo:`Vacaciones sobre 30 días: ${pe.nombre}`, texto:`${s.vac} días en el rol de ${y} (${s.vacFutura} aún programados). Probablemente incluye saldo de periodos anteriores.`, tags:["Vacaciones"], fn:()=>abrirDrill(`Vacaciones de ${esc(pe.nombre)}`,"Año "+y,regsDe([pe.bp],anio,x=>x.x.k==="VAC"))});
-    else if(s.vac<12 && pe.perfil!=="nd" && s.dias>200) out.push({sev:"media", ev:"Dato", titulo:`Pocas vacaciones: ${pe.nombre}`, texto:`${s.vac} de 30 días usados o programados en los meses cargados de ${y}. Riesgo de acumular saldo al cierre del año.`, tags:["Vacaciones"], fn:()=>abrirDrill(`Vacaciones de ${esc(pe.nombre)}`,"Año "+y,regsDe([pe.bp],anio,x=>x.x.k==="VAC"))});
+  /* Vacaciones por periodo DGAC de cada instructor */
+  vacEquipo().forEach(({pe,vp,p})=>{ if(!vp) return; const lib=p.der-p.tom-p.prog-p.sol;
+    const fn=()=>{ if(!puede("inst")) return; S.verBp=pe.bp; S.tab="inst"; S.mes=mesHoy(); render(); scrollTo(0,0); };
+    if(lib<0) out.push({sev:"media", ev:"Dato", titulo:`Vacaciones sobre el derecho: ${pe.nombre}`, texto:`Periodo ${p.etiqueta}: ${p.tom+p.prog} días tomados o programados frente a ${p.der} de derecho (${-lib} de más). Revisar en la hoja Vacaciones.`, tags:["Vacaciones"], fn});
+    else if(lib>0 && p.diasRenov<=90) out.push({sev:lib>=10?"alta":"media", ev:"Dato", titulo:`Saldo por vencer: ${pe.nombre}`, texto:`Le quedan ${lib} días sin programar y su periodo ${p.etiqueta} se renueva en ${p.diasRenov} días.`, tags:["Vacaciones"], fn});
   });
+  const solVacPend=(VAC().solicitudes||[]).filter(s=>s.estado==="pendiente");
+  if(solVacPend.length) out.push({sev:"media", ev:"Dato", titulo:`${plural(solVacPend.length,"solicitud","solicitudes")} de vacaciones por revisar`, texto:`${[...new Set(solVacPend.map(s=>(MO.personas[s.bp]||{}).nombre||s.nombre))].join(", ")}. Apruébalas o recházalas en la pestaña Vacaciones.`, tags:["Vacaciones"], fn:()=>{ if(!puede("vac")) return; S.tab="vac"; render(); scrollTo(0,0); }});
   const solNo=MO.solicitudes.filter(x=>per.some(m=>x.desde.startsWith(m)) && x.estado!=="asignado");
   if(solNo.length) out.push({sev:"media", ev:"Dato", titulo:`${solNo.length} solicitud${solNo.length>1?"es":""} sin asignar`, texto:`Solicitudes registradas en ${periodoTxt().toLowerCase()} que no se asignaron o no tienen respuesta.`, tags:["Solicitudes"], fn:()=>abrirSolicitudes(solNo,"Solicitudes sin asignar",periodoTxt())});
   const sinM=gruposPeriodo([S.mes]).todos.filter(r=>r.s.sin>0);
@@ -86,16 +88,15 @@ function admIndicadores(){
   let delta=""; if(S.modo==="mes"&&prevMes){ const pv=gruposPeriodo([prevMes]).todos.reduce((a,r)=>a+r.s.vin,0); const d=totVin-pv; delta=`<span class="${d>=0?"delta-up":"delta-dn"}">${d>=0?"▲":"▼"} ${Math.abs(d)}</span> vs ${mesCorto(prevMes)}`; }
   const wb=G.todos.reduce((a,r)=>a+r.s.vinWB,0), nb=G.todos.reduce((a,r)=>a+r.s.vinNB,0);
   const mesesY=mesesDelAnio(S.mes);
-  const vacRows=Object.values(MO.personas).map(pe=>({pe,s:ST(pe.bp,mesesY)})).filter(r=>r.s.presente&&r.pe.perfil!=="nd");
-  const vacSobre=vacRows.filter(r=>r.s.vac>30).length;
-  const vacPer=G.todos.reduce((a,r)=>a+(r.s.cnt.VAC||0),0);
+  const vacP=vacEquipo().filter(r=>r.vp).map(r=>r.p);
+  const vacLib=vacP.reduce((a,p)=>a+Math.max(0,p.der-p.tom-p.prog-p.sol),0), vacVence=vacP.filter(p=>p.der-p.tom-p.prog-p.sol>0&&p.diasRenov<=90).length;
   const sols=MO.solicitudes.filter(x=>per.some(m=>x.desde.startsWith(m))); const solOk=sols.filter(x=>x.estado==="asignado").length;
   const kpis=`<div class="kpis">
     <button class="kpi" ${drill(()=>abrirDrill("Vuelos de instrucción",periodoTxt(),regsDe(allB,per,x=>x.x.k==="VIN")))}><span class="l">Vuelos de instrucción</span><span class="v num">${totVin}</span><span class="d">${delta||`${wb} WB · ${nb} NB`}</span><span class="go">Ver vuelos</span></button>
     <button class="kpi" ${drill(irA("rkVuelos"))}><span class="l">Equidad de vuelos</span><span class="v">${I.V.length?nV.t.split(" ")[0]:"—"}</span><span class="d">${I.V.length?`Variación ${pct(I.cvV)} en el grupo de vuelo`:"Sin grupo de vuelo en el periodo"}</span><span class="go">Ver ranking</span></button>
     <button class="kpi" ${drill(()=>abrirDrill("Viajes con viático",periodoTxt(),regsDe(allB,per,x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"))))}><span class="l">Viajes con viático</span><span class="v num">${G.todos.reduce((a,r)=>a+r.s.viajes,0)}</span><span class="d">Top 3: ${I.totViajes?pct(I.top3v/I.totViajes):"—"} del total</span><span class="go">Ver viajes</span></button>
     <button class="kpi" ${drill(irA("compTiempo"))}><span class="l">Días disponibles ocupados</span><span class="v num">${I.C.length?pct(I.mC):"—"}</span><span class="d">${I.C.length?`Rango ${pct(I.cargaMin)}–${pct(I.cargaMax)}`:"Sin datos"}</span><span class="go">Ver reparto</span></button>
-    <button class="kpi" ${drill(()=>abrirDrill("Vacaciones",periodoTxt(),regsDe(allB,per,x=>x.x.k==="VAC")))}><span class="l">Vacaciones · ${S.modo==="mes"?mesCorto(S.mes):"ene–"+mesCorto(S.mes)}</span><span class="v num">${vacPer}<small> días</small></span><span class="d">${vacSobre} persona${vacSobre===1?"":"s"} sobre 30 días en ${mi.y}</span><span class="go">Ver fechas</span></button>
+    <button class="kpi" ${drill(irA("vacChart"))}><span class="l">Vacaciones por programar</span><span class="v num">${vacLib}<small> días</small></span><span class="d">${vacVence} con saldo que renueva en ≤90 días</span><span class="go">Ver por persona</span></button>
     <button class="kpi" ${drill(()=>abrirSolicitudes(sols,"Solicitudes del periodo"))}><span class="l">Solicitudes atendidas</span><span class="v num">${sols.length?pct(solOk/sols.length):"—"}</span><span class="d">${solOk} de ${sols.length} asignadas</span><span class="go">Ver solicitudes</span></button>
   </div>`;
   const verd=(t,n,ev,txt,fn)=>`<button class="verdict" ${drill(fn)}><span class="ic ${ev.c==="nc"?"nc":n.c}">${ev.c==="nc"?"?":n.i}</span><span><b>${t}: ${ev.c==="nc"?"no concluyente":n.t.toLowerCase()}</b><p>${txt}</p><span class="evid">${ev.t}${ev.d?` · ${ev.d}`:""}</span></span></button>`;
@@ -159,14 +160,7 @@ function admIndicadores(){
     ${mxRows.map(r=>{ const g=r.pe.perfil!==lastP?`<tr class="grp"><th colspan="${dims.length+1}">${r.pe.perfil==="vuelo"?"Perfil de vuelo":"Perfil de tierra"}</th></tr>`:""; lastP=r.pe.perfil;
       return g+`<tr><th class="nm" title="${esc(r.pe.nombre)}">${esc(r.pe.nombre)}</th>${dims.map(d=>{ if(!d.bps.has(r.pe.bp)) return `<td><span class="c dna">·</span></td>`; const n=d.f(r.s); const exp=d.disp?d.tot*r.s.disp/d.disp:0;
         return `<td><button class="c ${dCls(n,exp)}" ${drill(()=>drillStats({bp:r.pe.bp,meses:per,pred:d.pred,grupo:[...d.bps],titulo:`${d.lab} · ${esc(r.pe.nombre)}`,unidad:d.lab,base:d.base,baseLab:d.baseLab,note:`${n} frente a ${f1(exp)} esperados según su disponibilidad (×${f1(exp?n/exp:0)}). Total del grupo: ${d.tot}.`}))} data-tip="${esc(`<b>${r.pe.nombre}</b><br>${d.lab}: ${n}<br>Esperado por disponibilidad: ${f1(exp)}`)}">${n}</button></td>`; }).join("")}</tr>`; }).join("")||`<tr><td class="empty">Sin datos en el periodo.</td></tr>`}</tbody></table></div></div>`;
-  // Vacaciones del año
-  const vacS=vacRows.slice().sort((a,b)=>b.s.vac-a.s.vac); const maxVac=Math.max(30,...vacS.map(r=>r.s.vac))*1.05;
-  const vacHTML=`<div class="card" id="vacChart"><div class="chart-title"><div><h3>Vacaciones ${mi.y} por persona</h3><p>Año completo (meses cargados). Días tomados (sólido) y programados (rayado). La línea marca los 30 días anuales. Toca un nombre para ver las fechas.</p></div>
-    <div class="legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--c-vac) 0 3px,color-mix(in srgb,var(--c-vac) 35%,var(--surface)) 3px 6px)"></i>Programadas</span></div></div>
-    <div class="vac">${vacS.map(r=>`<span class="nm" ${drill(()=>abrirDrill(`Vacaciones de ${esc(r.pe.nombre)}`,"Año "+mi.y,regsDe([r.pe.bp],mesesY,x=>x.x.k==="VAC")))} style="cursor:pointer">${esc(r.pe.nombre)}</span>
-      <span class="track" data-tip="${esc(`<b>${r.pe.nombre}</b><br>${r.s.vacPasada} tomados · ${r.s.vacFutura} programados<br>${r.s.vac>30?`${r.s.vac-30} sobre los 30`:`Saldo ${30-r.s.vac}`}`)}"><span class="u" style="width:${r.s.vacPasada/maxVac*100}%"></span><span class="f" style="width:${r.s.vacFutura/maxVac*100}%;border-radius:0 4px 4px 0"></span><span class="m30" style="left:${30/maxVac*100}%"></span></span>
-      <span class="val num" style="color:${r.s.vac>30?"var(--warn)":"var(--ink)"}">${r.s.vac}</span>`).join("")}</div>
-    <p class="hint" style="margin-top:10px">Quienes superan 30 días probablemente usan saldo de periodos anteriores, que el Freeze no registra.</p></div>`;
+  const vacHTML=vacEquipoHTML();
   // Solicitudes por mes
   const solM=mesesY.map(m=>{ const l=MO.solicitudes.filter(x=>x.desde.startsWith(m)); return {m,l,ok:l.filter(x=>x.estado==="asignado").length}; });
   const maxS=Math.max(4,...solM.map(x=>x.l.length));
@@ -208,7 +202,7 @@ function admIndicadores(){
     ${conc}
     ${comp}
     <div class="grid2e">${vacHTML}${solHTML}</div>
-    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas Solicitudes, Vigencias y Usuarios. Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
+    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas Solicitudes, Vigencias, Usuarios y Vacaciones (periodo DGAC de cada instructor). Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
   </div>`;
 }
 
@@ -276,5 +270,5 @@ function admInst(){
   return `<div class="stack"><div class="field" style="max-width:380px"><label for="selVer">¿De quién es la información?</label><select class="input" id="selVer">${P.map(pe=>`<option value="${esc(pe.bp)}" ${pe.bp===S.verBp?"selected":""}>${esc(pe.nombre)}${!pe.meses[S.mes]?" (sin rol en "+mesInfo(S.mes).nombre+")":pe.perfil==="nd"?" (ausencia prolongada)":""}</option>`).join("")}</select></div>${vistaUsuario(S.verBp,true)}</div>`;
 }
 
-window.__archivos=(window.__archivos||{}); window.__archivos["Coordinacion"]="v2.3";
+window.__archivos=(window.__archivos||{}); window.__archivos["Coordinacion"]="v2.4";
 </script>

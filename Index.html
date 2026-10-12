@@ -3,7 +3,7 @@
 <head>
   <base target="_top">
   <meta charset="utf-8">
-  <meta name="rol-version" content="Index v2.3">
+  <meta name="rol-version" content="Index v2.4">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Rol de instructores LP</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -40,7 +40,7 @@
       (detalle ? '<div class="msg err" style="font-family:var(--f-mono);font-size:12.5px;white-space:pre-wrap">' + e(detalle) + '</div>' : '') +
       '<p class="sub"><b>Causas más comunes:</b></p><ol class="sub" style="margin:0;padding-left:20px;display:grid;gap:6px">' +
       '<li>Un archivo HTML se pegó <b>incompleto</b> (el editor a veces corta textos largos). Vuelve a copiar ese archivo completo desde el zip; su última línea debe ser <b>&lt;/script&gt;</b>.</li>' +
-      '<li>Los archivos HTML no se llaman exactamente <b>Index, Estilos, Clasificador, App, Vistas, Coordinacion, Admin</b>, o quedaron los antiguos <b>Server.gs</b> / <b>Index.html</b>.</li>' +
+      '<li>Los archivos HTML no se llaman exactamente <b>Index, Estilos, Clasificador, App, VacacionesVista, Vistas, Coordinacion, Admin</b>, o quedaron los antiguos <b>Server.gs</b> / <b>Index.html</b>.</li>' +
       '<li>La implementación no tiene la última versión: <b>Implementar › Gestionar implementaciones › lápiz › Versión: Nueva versión</b>.</li>' +
       '<li><b>Varias cuentas de Google abiertas</b> en este navegador: prueba en una <b>ventana de incógnito</b> con tu cuenta corporativa.</li></ol>' +
       '<p class="hint">Diagnóstico completo: agrega <b>?diag=1</b> al final de la dirección de la app (…/exec?diag=1).</p>' +
@@ -59,13 +59,14 @@
 </script>
 <?!= include('Clasificador'); ?>
 <?!= include('App'); ?>
+<?!= include('VacacionesVista'); ?>
 <?!= include('Vistas'); ?>
 <?!= include('Coordinacion'); ?>
 <?!= include('Admin'); ?>
 <script>
 (function(){
   window.__cargando = false;
-  var faltan = ['Clasificador', 'App', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
+  var faltan = ['Clasificador', 'App', 'VacacionesVista', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
   var tecnico = window.__errorCarga ? '\n\nDetalle técnico: ' + window.__errorCarga : '';
   if (faltan.length) {
     window.__fallaArranque('Archivo incompleto o con error: ' + faltan.join(', '),

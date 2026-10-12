@@ -9,7 +9,9 @@
  *   Datos.gs     Datos para el panel (filtrados por rol) y respuestas de instructores
  *   Setup.gs     instalar() y utilidades que se ejecutan desde el editor
  *   Semilla.gs   Datos iniciales de Solicitudes y Vigencias (BG INS)
- *   Index.html, Estilos.html, Clasificador.html, App.html   Interfaz
+ *   Vacaciones.gs        Vacaciones por periodo DGAC: hojas, ventana de solicitud, validación y aprobación
+ *   SemillaVacaciones.gs Datos iniciales de vacaciones (Vacaciones_INSTRUCTORES_1.xlsx)
+ *   Index, Estilos, Clasificador, App, VacacionesVista, Vistas, Coordinacion, Admin (HTML)   Interfaz
  */
 
 const CONFIG = {
@@ -28,7 +30,11 @@ const CONFIG = {
     permisos: 'Permisos',
     fuentes: 'Fuentes',
     solicitudes: 'Solicitudes',
-    vigencias: 'Vigencias'
+    vigencias: 'Vigencias',
+    vacaciones: 'Vacaciones',
+    vacDias: 'VacacionesDias',
+    vacBloques: 'VacacionesBloques',
+    solVac: 'SolicitudesVacaciones'
   },
 
   // Sesiones
@@ -54,8 +60,8 @@ const CONFIG = {
   ]
 };
 
-const VERSION_APP = '2.3';
-const ARCHIVOS_HTML_ = ['Estilos', 'Clasificador', 'App', 'Vistas', 'Coordinacion', 'Admin'];
+const VERSION_APP = '2.4';
+const ARCHIVOS_HTML_ = ['Estilos', 'Clasificador', 'App', 'VacacionesVista', 'Vistas', 'Coordinacion', 'Admin'];
 
 function doGet(e) {
   // https://…/exec?diag=1  ->  diagnóstico en texto (sin datos personales)
@@ -75,7 +81,7 @@ function doGet(e) {
 function diagnostico_() {
   const L = ['Rol de instructores LP · diagnóstico · versión ' + VERSION_APP, 'Fecha del servidor: ' + new Date().toISOString(), ''];
   const paso = (nombre, fn) => { try { L.push('OK    ' + nombre + (function (r) { return r ? ' — ' + r : ''; })(fn())); } catch (err) { L.push('ERROR ' + nombre + ' — ' + (err && err.message)); } };
-  paso('Archivo HTML "Index"', () => { const c = HtmlService.createHtmlOutputFromFile('Index').getContent(); if (c.indexOf("include('Admin')") < 0 || c.indexOf('Index v' + VERSION_APP) < 0) throw new Error('es una versión anterior; vuelve a copiarlo desde el zip v' + VERSION_APP); return Math.round(c.length / 1024) + ' KB'; });
+  paso('Archivo HTML "Index"', () => { const c = HtmlService.createHtmlOutputFromFile('Index').getContent(); if (c.indexOf("include('VacacionesVista')") < 0 || c.indexOf('Index v' + VERSION_APP) < 0) throw new Error('es una versión anterior; vuelve a copiarlo desde el zip v' + VERSION_APP); return Math.round(c.length / 1024) + ' KB'; });
   ARCHIVOS_HTML_.forEach(n => paso('Archivo HTML "' + n + '"', () => revisarArchivoHtml_(n)));
   paso('Google Sheet base', () => ss_().getName());
   Object.keys(CONFIG.hojas).forEach(k => paso('Hoja ' + CONFIG.hojas[k], () => {
