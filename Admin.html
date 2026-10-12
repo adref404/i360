@@ -1,0 +1,155 @@
+<script>
+/* Admin — actualizar rol (Google Sheets y Excel) y usuarios y accesos */
+/* ---------- Actualizar rol: Google Sheets conectados y Excel ---------- */
+async function cargarFuentes(){
+  if(S.fuentesCargando) return; S.fuentesCargando=true;
+  try{ S.fuentes=await api("apiFuentes",S.token); }catch(e){ S.fuentes={error:e.message}; }
+  S.fuentesCargando=false; if(S.tab==="cargar") render();
+}
+function estadoFuente(f){
+  if(!f.activo) return `<span class="pill">Pausada</span>`;
+  if(/^error/i.test(f.estado)) return `<span class="pill crit"><i></i>Error</span>`;
+  if(/^ok/i.test(f.estado)) return `<span class="pill good"><i></i>Sincronizada</span>`;
+  return `<span class="pill warn"><i></i>Pendiente</span>`;
+}
+function admCargar(){
+  if(!S.fuentes){ cargarFuentes(); return `<div class="loading" style="min-height:30vh"><span class="spin"></span><span>Leyendo la hoja Fuentes…</span></div>`; }
+  if(S.fuentes.error) return `<div class="card empty-state"><h3>No pudimos leer las fuentes</h3><p class="hint">${esc(S.fuentes.error)}</p><button class="btn" data-act="recargarFuentes">Reintentar</button></div>`;
+  const F=S.fuentes, pv=S.xlsxPrev;
+  const filas=F.fuentes.slice().sort((a,b)=>(b.mes||"").localeCompare(a.mes||""));
+  const conFuente=new Set(F.fuentes.filter(f=>f.activo).map(f=>f.mes));
+  return `<div class="stack">
+    <div class="card stack" style="gap:12px">
+      <div><h2>Conectar el Google Sheet de un mes</h2><p class="sub">Pega el enlace del rol mensual (por ejemplo Rol_Instructores_LP_NOVIEMBRE). Se lee la hoja ROL INS: BP en la columna A, nombre en la B y un día por columna desde la C. El mes se toma de la fecha del primer día.</p></div>
+      <form id="fFuente" class="form-grid" novalidate>
+        <div class="field"><label for="fuUrl">Enlace del Google Sheet</label><input class="input" id="fuUrl" placeholder="docs.google.com/spreadsheets/d/…" autocomplete="off" required></div>
+        <div class="field"><label for="fuMes">Mes (opcional)</label><input class="input" type="month" id="fuMes"></div>
+        <div class="field"><label for="fuHoja">Hoja (opcional)</label><input class="input" id="fuHoja" placeholder="ROL INS"></div>
+      </form>
+      <div class="row"><button class="btn primary" id="fuBtn" type="submit" form="fFuente">Conectar y leer</button><span class="hint">La cuenta dueña del script debe tener acceso al archivo (al menos de lector).</span></div>
+      <div id="fuRes">${S.fuentesMsg||""}</div>
+    </div>
+
+    <div class="card stack" style="gap:12px">
+      <div class="row between"><div><h3>Google Sheets conectados</h3><p class="hint">Cada sincronización guarda una copia del mes en la hoja Roles. Editar el Google Sheet no cambia la app hasta sincronizar.</p></div>
+        <div class="row"><label class="toggle"><input type="checkbox" id="autoSync" ${F.automatica?"checked":""}> Sincronizar cada hora</label><button class="btn" data-act="sincTodo" ${filas.some(f=>f.activo)?"":"disabled"}>Sincronizar todo</button></div></div>
+      ${filas.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Mes</th><th>Archivo</th><th>Estado</th><th>Última lectura</th><th>Instr.</th><th></th></tr></thead><tbody>
+        ${filas.map(f=>`<tr><td><b>${f.mes?mesLargo(f.mes):"—"}</b></td><td>${esc(f.archivo||"Sin leer")}<span class="sm2">${f.hoja?"Hoja "+esc(f.hoja):"Hoja detectada automáticamente"}</span></td>
+          <td>${estadoFuente(f)}${f.estado&&!/^ok$/i.test(f.estado)?`<span class="sm2" style="max-width:300px;white-space:normal">${esc(f.estado)}</span>`:""}</td>
+          <td>${f.ultima?fechaLarga(f.ultima):"—"}</td><td class="num">${f.instructores||"—"}</td>
+          <td class="acts"><a class="btn sm" href="${esc(f.enlace)}" target="_blank" rel="noopener">Abrir</a> ${f.activo?`<button class="btn sm" data-sinc="${esc(f.mes)}">Sincronizar</button> <button class="btn sm" data-pausa="${esc(f.mes)}" data-on="0">Pausar</button>`:`<button class="btn sm" data-pausa="${esc(f.mes)}" data-on="1">Reanudar</button>`}</td></tr>`).join("")}
+      </tbody></table></div>`:`<p class="empty">Todavía no hay Google Sheets conectados.</p>`}
+    </div>
+
+    <div class="src-grid">
+      <div class="card stack" style="gap:12px">
+        <div><h3>Subir un Excel (alternativa)</h3><p class="hint">Si el rol de un mes no está en Google Sheets, súbelo como .xlsx. Si ese mes tenía un Google Sheet conectado, se pausa para que no reemplace el Excel.</p></div>
+        <label class="drop" id="drop" for="fileX"><b>Arrastra el Excel aquí o elige el archivo</b><span class="hint">.xlsx · hoja ROL INS o la del mes</span><span class="btn">Elegir archivo</span><input type="file" id="fileX" accept=".xlsx,.xls" hidden></label>
+        <p class="err" id="errX"></p>
+        ${pv?`<div class="note stack" style="gap:10px"><div class="row between"><div><b>${esc(pv.archivo)}</b> · hoja ${esc(pv.hoja)}<div class="hint">${pv.instructores.length} instructores · ${pv.vacios} días vacíos</div></div>
+          <div class="field"><label for="mesX">Mes del rol</label><input class="input" type="month" id="mesX" value="${pv.mes}"></div></div>
+          <p class="hint">${MO.orden.includes(pv.mes)?`Ya existe ${mesLargo(pv.mes)}: al publicarlo lo reemplazas.`:`${mesLargo(pv.mes)} es un mes nuevo.`}${conFuente.has(pv.mes)?" Ese mes se lee de un Google Sheet: se pausará esa conexión.":""}</p>
+          <div class="row"><button class="btn primary" id="pubX">Publicar rol</button><button class="btn" id="descX">Descartar</button></div></div>`:""}
+      </div>
+      <div class="card"><h3 style="margin-bottom:6px">Meses disponibles en la app</h3><div class="fl">${F.meses.slice().reverse().map(m=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${mesLargo(m.mes)}</span><br><span class="m">${esc(m.fuente||"")}${m.hoja?" · "+esc(m.hoja):""}${m.actualizadoAt?" · "+fechaLarga(m.actualizadoAt):""}</span></span><span class="row" style="gap:6px"><span class="pill ${m.origen==="Google Sheet"?"info":m.origen==="Excel"?"acc":""}">${esc(m.origen||"Copia inicial")}</span><span class="pill">${m.instructores}</span></span></div>`).join("")||`<p class="empty">Sin meses cargados.</p>`}</div></div>
+    </div>
+  </div>`;
+}
+function cargarXLSX(){
+  if(window.XLSX) return Promise.resolve();
+  return new Promise((ok,no)=>{ const s=document.createElement("script"); s.src="https:"+"\x2F\x2F"+"cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; s.onload=()=>ok(); s.onerror=()=>no(new Error("No se pudo cargar el lector de Excel. Revisa tu conexión.")); document.head.appendChild(s); });
+}
+function mesDeCelda(v){
+  if(v instanceof Date && !isNaN(v)){ const d=new Date(v.getTime()+12*3600e3); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+  if(typeof v==="number" && v>30000 && v<80000){ const d=new Date(Math.round((v-25569)*864e5)); return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0"); }
+  const m=String(v||"").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m) return m[3]+"-"+m[2].padStart(2,"0");
+  return null;
+}
+async function leerExcel(file){
+  const err=$("#errX"); if(err) err.textContent="";
+  try{
+    await cargarXLSX();
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:"array"});
+    const nombres=wb.SheetNames; const hoja=nombres.find(n=>/ROL\s*INS/i.test(n))||nombres.find(n=>/^(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|SETIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)$/i.test(n.trim()))||nombres[0];
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[hoja],{header:1,raw:true,defval:""});
+    const h=rows.findIndex(r=>/nombre/i.test(String(r[1]||""))||/^bp$/i.test(String(r[0]||"").trim())); if(h<0) throw new Error(`No encontramos la fila de encabezado (BP en la columna A y Nombre en la B) en la hoja ${hoja}.`);
+    let c0=2, mes=null; for(let c=2;c<Math.min(rows[h].length,8);c++){ const mm=mesDeCelda(rows[h][c]); if(mm){ c0=c; mes=mm; break; } }
+    if(!mes) mes=S.mes||mesHoy();
+    const nd=mesInfo(mes).dias; const ins=[]; let vacios=0;
+    for(let r=h+1;r<rows.length;r++){ const row=rows[r]; const nom=String(row[1]||"").trim(); if(!nom) continue;
+      const bp=String(row[0]??"").replace(/\.0+$/,"").trim();
+      const dias=Array.from({length:nd},(_,k)=>{ const v=row[c0+k]; return v instanceof Date? v.toLocaleDateString("es-PE") : String(v??"").trim(); });
+      if(!bp && dias.every(x=>!x)) continue;
+      vacios+=dias.filter(x=>!x).length;
+      ins.push({bp,nombre:nom,dias}); }
+    if(!ins.length) throw new Error("El archivo no tiene instructores debajo del encabezado.");
+    S.xlsxPrev={mes,instructores:ins,archivo:file.name,hoja,vacios}; render();
+  }catch(e){ const x=$("#errX"); if(x) x.textContent=e.message||"No pudimos leer el archivo."; }
+}
+function resultadoSync(res){
+  const ok=res.filter(r=>r.ok), bad=res.filter(r=>!r.ok);
+  return `${ok.length?`<div class="msg ok">${ok.map(r=>`${mesLargo(r.mes)}: ${r.instructores} instructores${r.avisos&&r.avisos.length?` · ${esc(r.avisos.join(" "))}`:""}`).join("<br>")}</div>`:""}${bad.length?`<div class="msg err" style="margin-top:6px">${bad.map(r=>`${r.mes?mesLargo(r.mes):"Archivo"}: ${esc(r.error)}`).join("<br>")}</div>`:""}`;
+}
+
+/* ---------- Usuarios y accesos ---------- */
+async function cargarUsuarios(){
+  if(S.admCargando) return; S.admCargando=true;
+  try{ S.adm=await api("apiUsuarios",S.token); }catch(e){ S.adm={error:e.message}; }
+  S.admCargando=false; if(S.tab==="usuarios") render();
+}
+function admUsuarios(){
+  if(!S.adm){ cargarUsuarios(); return `<div class="loading" style="min-height:30vh"><span class="spin"></span><span>Leyendo la hoja Usuarios…</span></div>`; }
+  if(S.adm.error) return `<div class="card empty-state"><h3>No pudimos leer los usuarios</h3><p class="hint">${esc(S.adm.error)}</p><button class="btn" data-act="recargarUsuarios">Reintentar</button></div>`;
+  const U=S.adm.usuarios; const q=norm(S.buscaU.trim());
+  const filtros=[["todos","Todos",U.length],["sin","Sin activar",U.filter(u=>u.activo&&u.rol&&u.cuenta!=="activa").length],["admin","Coordinación",U.filter(u=>u.rol==="admin").length],["inst","Instructores",U.filter(u=>u.rol==="inst").length],["bloq","Bloqueados",U.filter(u=>u.bloqueado).length],["inac","Inactivos",U.filter(u=>!u.activo||!u.rol).length]];
+  const pasa=u=> S.filtroU==="todos" || (S.filtroU==="sin"&&u.activo&&u.rol&&u.cuenta!=="activa") || (S.filtroU==="admin"&&u.rol==="admin") || (S.filtroU==="inst"&&u.rol==="inst") || (S.filtroU==="bloq"&&u.bloqueado) || (S.filtroU==="inac"&&(!u.activo||!u.rol));
+  const lista=U.filter(u=>pasa(u)&&(!q||norm(u.nombre+" "+u.nombreCompleto+" "+u.correo).includes(q)||u.bp.includes(q))).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));
+  const activos=U.filter(u=>u.activo&&u.rol);
+  return `<div class="stack">
+    <div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="kpi"><span class="l">Usuarios activos</span><span class="v num">${activos.length}</span><span class="d">${activos.filter(u=>u.rol==="admin").length} de coordinación</span></div>
+      <div class="kpi"><span class="l">Cuentas activadas</span><span class="v num">${activos.filter(u=>u.cuenta==="activa").length}<small> de ${activos.length}</small></span><div class="meter"><span style="flex:${activos.filter(u=>u.cuenta==="activa").length};background:var(--good)"></span><span style="flex:${activos.filter(u=>u.cuenta!=="activa").length};background:var(--line-2)"></span></div></div>
+      <div class="kpi"><span class="l">Códigos vigentes</span><span class="v num">${U.filter(u=>u.codigoVence).length}</span><span class="d">Cada código vence 48 h después de generarse</span></div>
+      <div class="kpi"><span class="l">Bloqueados ahora</span><span class="v num">${U.filter(u=>u.bloqueado).length}</span><span class="d">Por intentos fallidos</span></div>
+    </div>
+    <div class="card stack" style="gap:12px">
+      <div class="row between"><div><h3>Accesos</h3><p class="hint">Quién entra y con qué rol se define en la hoja <b>Usuarios</b> (columnas Rol y Activo). Aquí generas el código para el primer ingreso o para restablecer una contraseña.</p></div>
+        <div class="row">${S.adm.baseUrl?`<a class="btn sm" href="${esc(S.adm.baseUrl)}" target="_blank" rel="noopener">Abrir hoja Usuarios</a>`:""}<button class="btn sm" data-act="recargarUsuarios">Actualizar</button></div></div>
+      <div class="row between"><div class="chips">${filtros.map(([k,l,c])=>`<button class="chip" aria-pressed="${S.filtroU===k}" data-filu="${k}">${l} <span class="num">${c}</span></button>`).join("")}</div>
+        <input class="input" id="buscaU" placeholder="Buscar nombre, BP o correo" value="${esc(S.buscaU)}" style="max-width:260px" autocomplete="off"></div>
+      ${lista.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Persona</th><th>Rol</th><th>Cuenta</th><th>Último ingreso</th><th>Fallidos</th><th></th></tr></thead><tbody>
+      ${lista.map(u=>{ const ok=u.activo&&u.rol;
+        const cuenta=!ok?`<span class="pill">${!u.activo?"Inactivo":"Sin rol"}</span>`: u.bloqueado?`<span class="pill crit"><i></i>Bloqueado</span>`: u.cuenta==="activa"?`<span class="pill good"><i></i>Activa</span>`:`<span class="pill warn"><i></i>Sin activar</span>`;
+        return `<tr><td><b>${esc(u.nombre)}</b><span class="sm2 mono">BP ${esc(u.bp)}</span>${u.correo?`<span class="sm2">${esc(u.correo)}</span>`:`<span class="sm2">Sin correo</span>`}</td>
+          <td><span class="pill ${u.rol==="admin"?"acc":u.rol==="inst"?"info":""}">${esc(u.rolTxt)}</span></td>
+          <td>${cuenta}${u.codigoVence?`<span class="sm2">Código vigente hasta ${fechaCorta(u.codigoVence)}</span>`:""}</td>
+          <td>${u.ultimoIngreso?fechaLarga(u.ultimoIngreso):"Nunca"}<span class="sm2">${u.ingresos} ingreso${u.ingresos===1?"":"s"}</span></td>
+          <td class="num">${u.fallidos}</td>
+          <td class="acts">${ok?`<button class="btn sm" data-codigo="${esc(u.bp)}">${u.cuenta==="activa"?"Restablecer":"Generar código"}</button> <button class="btn sm" data-cerrar="${esc(u.bp)}" title="Cierra todas sus sesiones abiertas">Cerrar sesiones</button>`:`<span class="hint">Actívalo en la hoja</span>`}</td></tr>`; }).join("")}
+      </tbody></table></div>`:`<p class="empty">Nadie coincide con el filtro.</p>`}
+    </div></div>`;
+}
+function abrirGenerarCodigo(bp){
+  const u=S.adm.usuarios.find(x=>x.bp===bp); if(!u) return;
+  const sc=document.createElement("div"); sc.className="scrim center";
+  const paso1=`<h2>${u.cuenta==="activa"?"Restablecer acceso":"Código de primer ingreso"}</h2>
+    <p class="hint">${esc(u.nombre)} · BP ${esc(u.bp)}. Se genera un código de un solo uso que vence en 48 horas. ${u.cuenta==="activa"?"Su contraseña actual sigue funcionando hasta que use el código.":""}</p>
+    <div class="row">${u.correo?`<button class="btn primary" data-gen="1">Generar y enviar a ${esc(u.correo)}</button>`:""}<button class="btn ${u.correo?"":"primary"}" data-gen="0">Generar y mostrar</button><button class="btn" id="gcX">Cancelar</button></div>
+    <p class="err" id="gcErr"></p>`;
+  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" id="gcBox">${paso1}</div>`;
+  document.body.appendChild(sc);
+  const close=()=>sc.remove(); sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#gcX",sc).onclick=close;
+  sc.querySelectorAll("[data-gen]").forEach(b=>b.onclick=async()=>{ sc.querySelectorAll("[data-gen]").forEach(x=>x.disabled=true); setCargando(b,true,"Generando…");
+    try{ const r=await api("apiGenerarCodigo",S.token,bp,b.dataset.gen==="1");
+      $("#gcBox",sc).innerHTML=`<h2>Código para ${esc(r.nombre)}</h2><div class="code-big" id="gcCode">${esc(r.codigo)}</div>
+        ${r.enviado?`<div class="msg ok">Enviado a ${esc(r.correo)}.</div>`:r.errorCorreo?`<div class="msg err">No se envió el correo: ${esc(r.errorCorreo)}</div>`:""}
+        <p class="hint">Vence el ${fechaLarga(r.vence)}. Compártelo por un canal privado. La persona entra con “Activar cuenta o usar un código”, su BP, este código y su nueva contraseña. El código no se vuelve a mostrar.</p>
+        <div class="row"><button class="btn" id="gcCopy">Copiar código</button><button class="btn primary" id="gcOk">Listo</button></div>`;
+      $("#gcCopy",sc).onclick=()=>{ try{ navigator.clipboard.writeText(r.codigo).then(()=>toast("Código copiado")); }catch(e){ toast("Selecciona el código y cópialo"); } };
+      $("#gcOk",sc).onclick=()=>{ close(); S.adm=null; render(); };
+    }catch(e){ setCargando(b,false); sc.querySelectorAll("[data-gen]").forEach(x=>x.disabled=false); $("#gcErr",sc).textContent=e.message; } });
+}
+
+window.__archivos=(window.__archivos||{}); window.__archivos["Admin"]="v2.3";
+</script>

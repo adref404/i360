@@ -1,0 +1,216 @@
+<script>
+/* Clasificador de celdas del Freeze (ROL INS) — basado en la hoja Diccionario del Excel */
+const CIUDAD = {LIM:"Lima",MIA:"Miami",SCL:"Santiago",CUZ:"Cusco",CIX:"Chiclayo",TPP:"Tarapoto",TRU:"Trujillo",PIU:"Piura",AQP:"Arequipa",CJA:"Cajamarca",PCL:"Pucallpa",TCQ:"Tacna",IQT:"Iquitos",JUL:"Juliaca",PEM:"Puerto Maldonado",TBP:"Tumbes",AYP:"Ayacucho",JAU:"Jauja",BOG:"Bogotá",UIO:"Quito",GYE:"Guayaquil",EZE:"Buenos Aires",GRU:"São Paulo",MAD:"Madrid",JFK:"Nueva York",LAX:"Los Ángeles",CUN:"Cancún",MEX:"Ciudad de México",ATL:"Atlanta",MCO:"Orlando",PUJ:"Punta Cana",FLN:"Florianópolis",BSB:"Brasilia",CTG:"Cartagena",MDE:"Medellín",ASU:"Asunción",MVD:"Montevideo",AEP:"Buenos Aires",COR:"Córdoba",LPB:"La Paz",VVI:"Santa Cruz",BCN:"Barcelona",FRA:"Fráncfort",LHR:"Londres",SJU:"San Juan",HAV:"La Habana",PTY:"Panamá"};
+const AEROP = new Set(Object.keys(CIUDAD));
+const INTERNAC = new Set(["MIA","SCL","BOG","UIO","GYE","EZE","GRU","MAD","JFK","LAX","CUN","MEX","ATL","MCO","PUJ","FLN","BSB","CTG","MDE","ASU","MVD","AEP","COR","LPB","VVI","BCN","FRA","LHR","SJU","HAV","PTY"]);
+const PERNOCTA = new Set(["MIA","MAD","JFK","LAX","CUN","MEX","ATL","MCO","PUJ","BCN","FRA","LHR","SJU","HAV","GRU","EZE","AEP"]);
+const norm = s => String(s||"").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+
+/* Categorías principales */
+const CAT = {
+  VIN:{nom:"Vuelo de instrucción o chequeo", corto:"VIN", grupo:"trabajo"},
+  VHA:{nom:"Vuelo propio: habilitación, experiencia reciente o como alumno", corto:"HAB", grupo:"trabajo"},
+  VOT:{nom:"Otro vuelo (traslado, auditoría en vuelo, posicionamiento)", corto:"VOT", grupo:"trabajo"},
+  IET:{nom:"Instrucción en tierra", corto:"IET", grupo:"trabajo"},
+  RES:{nom:"Reserva IET", corto:"RES", grupo:"trabajo"},
+  AUD:{nom:"Auditoría e IOSA", corto:"AUD", grupo:"trabajo"},
+  FOR:{nom:"Formación propia (cursos, TTT, talleres como alumno)", corto:"FOR", grupo:"trabajo"},
+  ADM:{nom:"Gestión y administrativo (HO File, reuniones, back up)", corto:"ADM", grupo:"trabajo"},
+  BLA:{nom:"Día en blanco (junto a vuelo o actividad)", corto:"B", grupo:"blanco"},
+  DO: {nom:"Día libre (DO / FDS)", corto:"DO", grupo:"descanso"},
+  FER:{nom:"Feriado", corto:"FER", grupo:"descanso"},
+  CUM:{nom:"Cumpleaños", corto:"CUM", grupo:"descanso"},
+  VAC:{nom:"Vacaciones", corto:"VAC", grupo:"ausencia"},
+  DM: {nom:"Descanso médico (SICK)", corto:"DM", grupo:"ausencia"},
+  LIC:{nom:"Licencia u otra ausencia (LP, NME)", corto:"LIC", grupo:"ausencia"},
+  SIN:{nom:"Sin asignar en el Excel", corto:"—", grupo:"sin"}
+};
+
+/* Subtipos de tierra para análisis de concentración */
+function subtipoTierra(U){
+  if(/INICIAL/.test(U)) return "Iniciales";
+  if(/^RTI|RTI:/.test(U)) return "RTI (recurrentes)";
+  if(/REVA|TTT REVA|BAJADA/.test(U)) return "Revas de servicio";
+  if(/HANDS ON|DITCHING|SITUACIONES DE EMERGENCIA|CHEQUEO DGAC|AVION ENERGIZ|PRACTICE BOARDING/.test(U)) return "Prácticas en avión o maqueta";
+  if(/HB6|CURSO B7|CURSO 50|CURSO ASCENSO|CURSO HB6|CLASE MODELO|CEREMONIA/.test(U)) return "Cursos a tripulantes";
+  if(/TALLER|DESAYUNO|RRVV|REALIDAD VIRTUAL|CRM/.test(U)) return "Talleres, CRM y realidad virtual";
+  return "Otras actividades de tierra";
+}
+
+function flotaDe(U){
+  const out=new Set();
+  (U.match(/A3[12][019]F?|A320XLR|B7[678]7|\bWB\b|\bNB\b|\b320\b|\b767\b|\b787\b/g)||[]).forEach(f=>{
+    if(/A3|320|NB/.test(f)) out.add("A320"); else if(/787/.test(f)) out.add("B787"); else if(/767/.test(f)) out.add("B767"); else if(f==="WB") out.add("WB");
+  });
+  return [...out];
+}
+
+function parseCelda(raw){
+  const t = String(raw||"").replace(/\r/g,"").trim();
+  if(!t) return {cat:"SIN",code:"—",titulo:"Sin asignar",meta:"",raw:""};
+  const lines = t.split("\n").map(s=>s.replace(/^\s*[-–\x2A]\s{0,99}/,"").replace(/\s+/g," ").trim()).filter(Boolean);
+  const U = norm(t), U1 = norm(lines[0]);
+  let cat, sub=null;
+  if(/^VACACION/.test(U1)) cat="VAC";
+  else if(/^(DO|FDS)\b/.test(U1)) cat="DO";
+  else if(/^FERIADO/.test(U1)) cat="FER";
+  else if(/^SICK|DESCANSO MEDICO/.test(U1)) cat="DM";
+  else if(/^(LP|NME)\b/.test(U1)) cat="LIC";
+  else if(/^CUMP/.test(U1)) cat="CUM";
+  else if(/^(B|BLANCO)\b/.test(U1)) cat="BLA";
+  else if(/ALUMN|HABILITACI|^HAB\b|^HAB |EXP RECIENTE|COBUS/.test(U1) && !/^RTI/.test(U1)) cat="VHA";
+  else if(/^LCK|^PD\b|CHEQUEO LATAM|CHEQUEO BI ?ANUAL|BIANUAL|RENOVACION|REENTRENAMIENTO|RECALIFICACI|CHEQUEO INS|CHEQUEO DGAC INSTRUCTOR|CHEQUEO INST\. DGAC|CHEQUEO DGAC B787|CHEQUEO DGAC A320/.test(U1) && !/ENERGIZ/.test(U)) cat="VIN";
+  else if(/^VUELO|TRASLADO/.test(U1)) cat="VOT";
+  else if(/IOSA|AUDITORI|AUDITOR 20/.test(U1)) cat="AUD";
+  else if(/^RESERVA|BLOQUEO IET|^IET$/.test(U1)) cat="RES";
+  else if(/HO FILE|REUNION|REU |BACK ?UP|^ADM|^LDS|EMBAJADOR/.test(U1)) cat="ADM";
+  else if(/^TTT|CURSO REFRES|CURSO CRM IDE|CRM REFRESCO|CURSO INS|CURSO ESTANDARIZ|CURSO FORMACION|CERTIFICACION|CURSO PRIMEROS|EXAMEN|RECURRENTE AUDITOR|CURSO AUDITOR|TALLER 2026|RTI ALUMNO|REFUERZO/.test(U1)) cat="FOR";
+  else { cat="IET"; sub=subtipoTierra(U1); }
+  if(cat==="AUD" && /RECURRENTE AUDITOR|CURSO AUDITOR/.test(U1)) cat="FOR";
+
+  const rutas=[]; const reR=/\b([A-Z]{3})\s*-\s*([A-Z]{3})(?:\s*-\s*([A-Z]{3}))?\b/g; let m;
+  while((m=reR.exec(U))){ const r=[m[1],m[2],m[3]].filter(Boolean); if(r.every(a=>AEROP.has(a))) rutas.push(r); }
+  const vuelos=[]; const reV=/LA\s?(\d{4})\s*(\(([^)]*)\))?/g;
+  while((m=reV.exec(t))){ vuelos.push("LA "+m[1]+(m[3]?", "+m[3].replace(/\s*hrs?/i,"").trim():"")); }
+  const flota=flotaDe(U);
+  const esVuelo = cat==="VIN"||cat==="VHA"||cat==="VOT";
+  const destinos=[...new Set(rutas.flat().filter(a=>a!=="LIM"))];
+  const internacional = destinos.some(a=>INTERNAC.has(a));
+  const pernocta = rutas.some(r=>r.length===2 && (PERNOCTA.has(r[0])||PERNOCTA.has(r[1])));
+  const hor = t.match(/(\d{1,2}[:.]\d{2})\s*-\s*(\d{1,2}[:.]\d{2})/);
+  let code, titulo, meta=[];
+  if(esVuelo && rutas.length){
+    code = destinos.length>1 ? destinos[0]+"+" : (destinos[0]||"LIM");
+    const tipo = fmtTit(lines[0].replace(/\(.*$/,"").trim());
+    const rutaTxt = rutas.map(r=>r.length===2?`${CIUDAD[r[0]]} a ${CIUDAD[r[1]]}`:r.map(a=>CIUDAD[a]).join("–")).filter((v,i,a)=>a.indexOf(v)===i).join(" y ");
+    titulo = `${tipo}, ${rutaTxt}`;
+    meta.push(...vuelos);
+  } else {
+    titulo = fmtTit(lines[0].replace(/\(\s*\d{1,2}[:.]\d{2}.*$/,"").trim());
+    code = codigoCorto(U1, lines[0], cat);
+    const rest = lines.slice(1).filter(l=>!/^\(?\d{1,2}[:.]\d{2}/.test(l));
+    meta.push(...rest);
+    if(hor) meta.push(hor[1].replace(".",":")+"–"+hor[2].replace(".",":"));
+  }
+  const fijos={DO:["Día libre","Libre"],VAC:["Vacaciones","Vac."],FER:["Feriado","Fer."],DM:["Descanso médico","SICK"],CUM:["Cumpleaños","Cump."],BLA:["Día en blanco","B"]};
+  if(fijos[cat]){ titulo=fijos[cat][0]; code=fijos[cat][1]; meta=[]; }
+  if(cat==="LIC"){ titulo = /NME/.test(U1)?"NME (no disponible)":"Licencia (LP)"; code=/NME/.test(U1)?"NME":"LP"; meta=[]; }
+  return {cat,sub:cat==="IET"?sub:null,code,titulo,meta:meta.join("\n"),raw:t,rutas,flota,
+    esVuelo, internacional, pernocta, wb: flota.some(f=>f==="B767"||f==="B787"||f==="WB"), nb: flota.includes("A320")};
+}
+function fmtTit(x){ x=String(x||""); x=x.toLowerCase(); return (x.charAt(0).toUpperCase()+x.slice(1)).replace(/\b(iet|lck|rti|ho|ide|ins|iosa|dgac|tcs|tjs|cst|ccm|hb6|g\d+|a3[12][019]f?|b7\d7|wb|nb|lim|mia|scl|pd|am|pm|procab|pro cab|sick|ttt|crm|svc|rrvv|pau|atl|eds|cun|jb|lp|nme|xlr|poi|ps)\b/gi,w=>w.toUpperCase()); }
+function codigoCorto(U, first, cat){
+  const R = [
+    [/RESERVA IET TARDE/,"IET T"],[/RESERVA IET|^IET$|BLOQUEO IET/,"IET"],[/HO FILE/,"HO"],[/CURSO B787/,"787"],[/CURSO 50/,"50%"],[/INICIAL (G\d+)/,m=>m[1]],
+    [/^RTI ALUMNO/,"RTI A"],[/^RTI/,"RTI"],[/REUNION/,"Reu."],[/EMBAJADOR/,"Emb."],[/TTT/,"TTT"],[/TALLER/,"Taller"],[/REVA/,"Reva"],[/HB6/,"HB6"],[/HANDS ON/,"Hands"],[/DITCHING/,"Ditch"],
+    [/SITUACIONES/,"SSEE"],[/CHEQUEO DGAC/,"DGAC"],[/CHEQUEO LATAM/,"CHQ"],[/RECALIFICACION/,"RECA"],[/BI ?ANUAL/,"Bianual"],[/RENOVACION/,"Renov."],
+    [/REENTRENAMIENTO/,"Reentr."],[/IOSA/,"IOSA"],[/AUDITORI/,"Audit."],[/ESTANDARIZACION/,"Estánd."],[/DESAYUNO/,"Desay."],[/BACK ?UP/,"BackUp"],
+    [/EXP RECIENTE/,"ExpRec"],[/ALUMN/,"Alumno"],[/HABILITACI|^HAB/,"HAB"],[/CERTIFICACION|PRIMEROS/,"Cert."],[/EXAMEN/,"Examen"],[/CRM/,"CRM"],
+    [/RRVV|REALIDAD VIRTUAL/,"RRVV"],[/CURSO/,"Curso"],[/^PD/,"PD"],[/^ADM/,"ADM"],[/PREPARACION/,"Prep."],[/CEREMONIA/,"Cerem."],[/CLASE MODELO/,"Clase"]
+  ];
+  for(const [re,out] of R){ const m=U.match(re); if(m) return typeof out==="function"?out(m):out; }
+  return first.split(/\s+/)[0].slice(0,7);
+}
+
+
+/* ================= Modelo de indicadores del Freeze ================= */
+const MESES_N = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const TRABAJO = new Set(["VIN","VHA","IET","RES","AUD","GES"]);
+const AUSENCIA = new Set(["VAC","DM","LIC"]);
+const DESCANSO = new Set(["DO","FER","CUM"]);
+function mesInfo(mes){ const [y,m]=mes.split("-").map(Number); return {y,m,dias:new Date(y,m,0).getDate(),nombre:MESES_N[m-1]}; }
+function dowOf(mes,d){ const {y,m}=mesInfo(mes); return new Date(y,m-1,d).getDay(); }
+
+/* Normaliza categorías del clasificador a los 6 grupos de trabajo del tablero */
+function catTablero(p){
+  if(p.cat==="VOT") return "VHA";
+  if(p.cat==="FOR"||p.cat==="ADM") return "GES";
+  return p.cat;
+}
+
+/* P = respuesta de apiDatos: {meses, dotacion, vigencias, solicitudes} */
+function construirModelo(P){
+  const meses = {};
+  (P.meses||[]).forEach(m=>{ if(/^\d{4}-\d{2}$/.test(m.mes)) meses[m.mes]={...m}; });
+  const orden = Object.keys(meses).sort();
+  const personas = {};
+  orden.forEach(mes=>{
+    const M=meses[mes], nd=mesInfo(mes).dias;
+    M.proc = (M.instructores||[]).map(i=>{
+      const dias=(i.dias||[]).slice(0,nd); while(dias.length<nd) dias.push("");
+      const p = dias.map(t=>{ const x=parseCelda(t); x.k=catTablero(x); return x; });
+      const bp=String(i.bp||i.nombre);
+      if(!personas[bp]) personas[bp]={bp, nombre:i.nombre, meses:{}};
+      personas[bp].nombre=i.nombre; // el más reciente gana
+      personas[bp].meses[mes]=p;
+      return {bp, nombre:i.nombre, p};
+    });
+  });
+  Object.values(personas).forEach(pe=>{
+    const d=(P.dotacion||{})[pe.bp]; pe.flota = d&&d.flota&&!/^(null|nb|wb)$/i.test(d.flota) ? d.flota : null;
+    pe.bg=(P.vigencias||{})[pe.bp]||null;
+    pe.perfil="tierra";
+  });
+  return {meses, orden, personas, solicitudes:P.solicitudes||[], perfilAnio:null};
+}
+
+/* Perfil del año del mes elegido: vuelo, tierra o nd (ausencia prolongada) */
+function asignarPerfiles(modelo, anio){
+  if(modelo.perfilAnio===anio) return;
+  const mesesY=modelo.orden.filter(m=>m.startsWith(anio));
+  Object.values(modelo.personas).forEach(pe=>{
+    const presentes=mesesY.filter(m=>pe.meses[m]);
+    const s=stats(modelo, pe.bp, presentes);
+    if(!presentes.length){ pe.perfil="nd"; return; }
+    const minVin=Math.max(1, Math.round(0.8*presentes.length));
+    pe.perfil = s.disp < s.dias*0.35 ? "nd" : (s.vin >= Math.max(minVin, s.trab*0.15) ? "vuelo" : "tierra");
+  });
+  modelo.perfilAnio=anio;
+}
+
+/* Meses del periodo: solo el mes, o enero→mes del mismo año */
+function periodo(modelo, mes, modo){
+  if(modo==="mes") return [mes];
+  const y=mes.slice(0,4); return modelo.orden.filter(m=>m.startsWith(y) && m<=mes);
+}
+
+/* Estadísticas de una persona en un conjunto de meses */
+function stats(modelo, bp, meses, hoy){
+  const pe=modelo.personas[bp];
+  const s={bp, dias:0, disp:0, trab:0, cnt:{}, sub:{}, vin:0, vinWB:0, vinNB:0, vha:0, viajes:0, intl:0, fds:0, blanco:0, racha:0, rachaFin:null,
+    vac:0, vacPasada:0, vacFutura:0, sin:0, presente:false, reg:[]};
+  let run=0, prevPern=false;
+  meses.forEach(mes=>{
+    const p=pe&&pe.meses[mes]; if(!p) { run=0; prevPern=false; return; }
+    s.presente=true;
+    const mi=mesInfo(mes);
+    p.forEach((x,k)=>{
+      const d=k+1; s.dias++;
+      const K=x.k; s.cnt[K]=(s.cnt[K]||0)+1;
+      if(!AUSENCIA.has(K)) s.disp++;
+      if(TRABAJO.has(K)) s.trab++;
+      if(K==="IET"&&x.sub) s.sub[x.sub]=(s.sub[x.sub]||0)+1;
+      if(K==="VIN"){ s.vin++; if(x.wb) s.vinWB++; else if(x.nb) s.vinNB++; if(x.internacional) s.intl++; }
+      if(K==="VHA") s.vha++;
+      const esV = K==="VIN"||K==="VHA";
+      if(esV && x.pernocta){ if(!prevPern) s.viajes++; prevPern=true; } else prevPern=false;
+      const w=dowOf(mes,d); if((w===0||w===6) && TRABAJO.has(K)) s.fds++;
+      if(K==="BLA") s.blanco++;
+      if(K==="SIN") s.sin++;
+      if(TRABAJO.has(K)||K==="BLA"){ run++; if(run>s.racha){ s.racha=run; s.rachaFin={mes,d}; } } else run=0;
+      if(K==="VAC"){ s.vac++; const f=new Date(mi.y, mi.m-1, d); if(hoy && f>hoy) s.vacFutura++; else s.vacPasada++; }
+      s.reg.push({mes,d,x});
+    });
+  });
+  s.carga = s.disp? s.trab/s.disp : 0;
+  s.tasaVin = s.disp? s.vin/s.disp*30 : 0; // vuelos por cada 30 días disponibles
+  return s;
+}
+
+function media(a){ return a.length? a.reduce((x,y)=>x+y,0)/a.length : 0; }
+function desv(a){ const m=media(a); return a.length>1? Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/(a.length-1)) : 0; }
+function minArr(a){ return a.length? Math.min(...a) : 0; }
+function maxArr(a){ return a.length? Math.max(...a) : 0; }
+
+window.__archivos=(window.__archivos||{}); window.__archivos["Clasificador"]="v2.3";
+</script>

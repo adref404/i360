@@ -1,0 +1,426 @@
+<script>
+/* App — núcleo: estado, servidor, inicio de sesión, pestañas y eventos */
+/* =====================================================================
+   Rol de instructores LP — interfaz
+   Los datos llegan del servidor según la sesión (apiDatos). Nada del rol
+   está incrustado en la página.
+   ===================================================================== */
+
+/* ============ Utilidades ============ */
+const $ = (s, r=document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const DOW = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+const DOWS = ["dom","lun","mar","mié","jue","vie","sáb"];
+const cap = s => s.charAt(0).toUpperCase()+s.slice(1);
+const f1 = n => (Math.round(n*10)/10).toLocaleString("es-PE",{minimumFractionDigits:0,maximumFractionDigits:1});
+const pct = n => Math.round(n*100)+"%";
+const mesCorto = mes => mesInfo(mes).nombre.slice(0,3);
+const mesLargo = mes => cap(mesInfo(mes).nombre)+" "+mesInfo(mes).y;
+function fechaCorta(iso){ if(!iso) return ""; try{ const d=new Date(iso); if(isNaN(d)) return ""; return d.toLocaleDateString("es-PE",{day:"numeric",month:"short"})+", "+d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } }
+function fechaLarga(iso){ if(!iso) return ""; const d=new Date(iso); if(isNaN(d)) return ""; return d.toLocaleDateString("es-PE",{day:"numeric",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"}); }
+const fmtISO = s => s ? s.split("-").reverse().join("/") : "—";
+let HOY = new Date();
+
+/* Categorías del tablero (6 de trabajo + estados) */
+const KC = {
+  VIN:{nom:"Vuelo de instrucción o chequeo", corto:"Vuelo INS", color:"var(--c-vin)"},
+  AUD:{nom:"Auditoría e IOSA", corto:"Auditoría", color:"var(--c-aud)"},
+  IET:{nom:"Instrucción en tierra (iniciales, RTI, revas, prácticas)", corto:"Tierra", color:"var(--c-iet)"},
+  RES:{nom:"Reserva IET", corto:"Reserva", color:"var(--c-res)"},
+  VHA:{nom:"Vuelo propio (habilitación, exp. reciente, alumno, traslado)", corto:"Vuelo propio", color:"var(--c-vha)"},
+  GES:{nom:"Gestión y formación (HO File, reuniones, cursos, TTT)", corto:"Gestión", color:"var(--c-ges)"},
+  VAC:{nom:"Vacaciones", corto:"Vacaciones", color:"var(--c-vac)"},
+  DM: {nom:"Descanso médico (SICK)", corto:"SICK", color:"var(--c-dm)"},
+  LIC:{nom:"Licencia u otra ausencia (LP, NME)", corto:"Licencia", color:"var(--c-lic)"},
+  BLA:{nom:"Día en blanco (junto a vuelo o actividad)", corto:"Blanco", color:"var(--c-fer)"},
+  DO: {nom:"Día libre (DO / FDS)", corto:"Libre", color:"var(--c-do)"},
+  FER:{nom:"Feriado", corto:"Feriado", color:"var(--c-fer)"},
+  CUM:{nom:"Cumpleaños", corto:"Cumpleaños", color:"var(--c-cum)"},
+  SIN:{nom:"Sin asignar en el rol", corto:"Sin asignar", color:"transparent"}
+};
+const WORK = ["VIN","AUD","IET","RES","VHA","GES"];
+const TODAS = ["VIN","AUD","IET","RES","VHA","GES","BLA","VAC","DM","LIC","CUM","FER","DO","SIN"];
+const sw = k => `<i class="sw ${k==="DO"?"do":""}" style="background:${KC[k].color}${k==="SIN"||k==="BLA"?";box-shadow:inset 0 0 0 1px var(--line-2)":""}"></i>`;
+const ICON_PLANE = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>`;
+
+const TAB_NOMBRE = {ind:"Indicadores", seg:"Seguimiento del mes", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", cargar:"Actualizar rol", usuarios:"Usuarios y accesos", mi:"Mi rol"};
+
+/* ============ Estado ============ */
+const S = {
+  token:null, usuario:null, vistas:[], equipo:false, hoy:null, baseUrl:"",
+  resp:{}, mes:null, modo:"anio", vVuelo:"tasa", distModo:"pct",
+  tab:null, uFiltroMes:null, uTipo:"todos", dia:null, filtro:null, busca:"", verBp:null, segFiltro:"pend",
+  xlsxPrev:null, fuentes:null, fuentesMsg:"", fuentesCargando:false, adm:null, admCargando:false, buscaU:"", filtroU:"todos",
+  login:{modo:"login", usuario:"", err:"", ok:"", google:""}, listo:false
+};
+let MO = construirModelo({meses:[]});
+let STC = {};
+function ST(bp, meses){ const k=bp+"|"+meses.join(","); return STC[k] || (STC[k]=stats(MO,bp,meses,HOY)); }
+const PER = () => periodo(MO, S.mes, S.modo);
+const anioHasta = mes => periodo(MO, mes, "anio");
+const mesesDelAnio = mes => MO.orden.filter(m=>m.startsWith(mes.slice(0,4)));
+const rosterMes = mes => (MO.meses[mes]||{proc:[]}).proc;
+const mesHoy = () => (S.hoy||"").slice(0,7);
+const esEditable = mes => !!mes && mes >= mesHoy();
+const respDe = (bp,mes=S.mes) => S.resp[mes+"_"+bp] || null;
+const puede = v => S.vistas.includes(v);
+const esAdmin = () => S.usuario && S.usuario.rol==="admin";
+
+/* Registro de acciones de detalle (drill-down) por render */
+let DR = {}; let drn=0;
+function drill(fn){ const id="d"+(++drn); DR[id]=fn; return `data-drill="${id}"`; }
+
+/* ============ Conexión con el servidor ============ */
+const TOKEN_KEY = "rolins.token";
+function leerToken(){ try{ return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || null; }catch(e){ return null; } }
+function guardarToken(t, recordar){ try{ localStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(TOKEN_KEY); (recordar?localStorage:sessionStorage).setItem(TOKEN_KEY,t); }catch(e){} }
+function borrarToken(){ try{ localStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(TOKEN_KEY); }catch(e){} }
+const hayServidor = () => typeof google!=="undefined" && google.script && google.script.run;
+function dispositivo(){
+  const u=navigator.userAgent||"";
+  const tiene=t=>u.indexOf(t)>=0;
+  const nav=tiene("Edg"+"\x2F")?"Edge":tiene("OPR"+"\x2F")?"Opera":tiene("Chrome"+"\x2F")?"Chrome":tiene("Firefox"+"\x2F")?"Firefox":tiene("Safari"+"\x2F")?"Safari":"Navegador";
+  const so=/Windows/.test(u)?"Windows":/Android/.test(u)?"Android":/iPhone|iPad/.test(u)?"iOS":/Mac OS/.test(u)?"macOS":/Linux/.test(u)?"Linux":"";
+  return nav+(so?" en "+so:"");
+}
+function api(fn, ...args){
+  return new Promise((ok0,no0)=>{
+    if(!hayServidor()){ no0(new Error("Abre la aplicación desde su enlace de Apps Script.")); return; }
+    let fin=false;
+    const ok=v=>{ if(fin) return; fin=true; clearTimeout(t); ok0(v); };
+    const no=e=>{ if(fin) return; fin=true; clearTimeout(t); no0(e); };
+    const t=setTimeout(()=>{ const e=new Error("El servidor no respondió en 45 segundos. Revisa tu conexión e intenta de nuevo. Si tienes varias cuentas de Google abiertas, usa una ventana de incógnito."); e.codigo="TIEMPO"; no(e); },45000);
+    google.script.run
+      .withSuccessHandler(r=>{
+        if(r && r.ok) return ok(r.data);
+        if(r==null || typeof r!=="object" || !("ok" in r)){ const e=new Error("El servidor respondió algo inesperado al llamar a "+fn+". ¿Quedó el Server.gs antiguo o la implementación no tiene la versión nueva?"); e.codigo="FORMATO"; return no(e); }
+        const e=new Error((r&&r.error)||"No se pudo completar la acción."); e.codigo=r&&r.codigo;
+        if(e.codigo==="SESION" && S.usuario){ sesionTerminada(e.message); }
+        no(e);
+      })
+      .withFailureHandler(err=>{ const det=err&&err.message?err.message:String(err||""); console.error("Apps Script",fn,err);
+        const e=new Error(/not found|no se encontr|is not a function|no es una funci/i.test(det)?`El servidor no tiene la función ${fn}: la implementación no tiene la versión nueva del código.`:`No se pudo comunicar con el servidor (${det||"sin detalle"}). Si tienes varias cuentas de Google abiertas, abre la app en una ventana de incógnito.`); e.detalle=det; no(e); })
+      [fn](...args);
+  });
+}
+function sesionTerminada(msg){
+  borrarToken(); S.token=null; S.usuario=null; S.vistas=[]; S.listo=false;
+  S.login={...S.login, modo:"login", err:msg||"Tu sesión terminó. Vuelve a ingresar.", ok:""};
+  document.querySelectorAll(".scrim").forEach(x=>x.remove());
+  render();
+}
+
+/* ============ Arranque y sesión ============ */
+async function boot(){
+  try{ await arrancar(); }
+  catch(e){ console.error(e); if(window.__fallaArranque && !S.usuario && !document.querySelector("#fLogin")) window.__fallaArranque("No se pudo iniciar la aplicación", e.message); }
+}
+async function arrancar(){
+  if(!hayServidor()){ $("#app").innerHTML=`<div class="card empty-state" style="margin-top:40px"><h2>Abre la aplicación desde su enlace</h2><p class="hint">Este archivo funciona dentro de Google Apps Script.</p></div>`; return; }
+  const t=leerToken();
+  try{
+    const r=await api("apiInicio", t);
+    S.login.google=r.google||"";
+    if(r.usuario){ S.token=t; S.usuario=r.usuario; await cargarDatos(false); }
+    else { borrarToken(); render(); }
+  }catch(e){ S.login.err=e.message; render(); }
+}
+async function cargarDatos(mantener){
+  window.__appIniciada=true;
+  if(!S.listo){ $("#app").innerHTML=`<div class="loading"><span class="spin"></span><span>Cargando tu información…</span></div>`; pintarCabecera(); }
+  try{
+    const P=await api("apiDatos", S.token);
+    aplicarDatos(P, mantener);
+  }catch(e){
+    if(e.codigo==="SESION") return;
+    $("#app").innerHTML=`<div class="card empty-state" style="margin-top:30px"><h2>No pudimos cargar el rol</h2><p class="hint">${esc(e.message)}</p><button class="btn primary" id="reintentar">Reintentar</button></div>`;
+    const b=$("#reintentar"); if(b) b.onclick=()=>cargarDatos(mantener);
+  }
+}
+function aplicarDatos(P, mantener){
+  S.usuario=P.usuario; S.vistas=P.usuario.vistas||[]; S.equipo=!!P.usuario.equipo; S.hoy=P.hoy; S.baseUrl=P.baseUrl||"";
+  S.resp=P.respuestas||{};
+  const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
+  MO=construirModelo(P); STC={};
+  if(!mantener || !MO.orden.includes(S.mes)) S.mes=mesInicial();
+  if(!S.tab || !puede(S.tab)) S.tab=S.vistas[0]||"mi";
+  S.listo=true;
+  render();
+}
+function mesInicial(){
+  if(!MO.orden.length) return null;
+  const h=mesHoy();
+  if(MO.orden.includes(h)) return h;
+  const prev=MO.orden.filter(x=>x<=h);
+  return prev.length? prev[prev.length-1] : MO.orden[0];
+}
+async function recargar(){ STC={}; await cargarDatos(true); }
+
+/* ============ Render raíz ============ */
+function pintarCabecera(){
+  const top=$("#topMes"), who=$("#who");
+  if(!S.usuario){ top.textContent="Instructores LP"; who.innerHTML=""; return; }
+  if(S.mes) top.textContent = S.equipo ? `Freeze ${mesLargo(S.mes)} · ${rosterMes(S.mes).length} instructores` : `Freeze ${mesLargo(S.mes)}`;
+  else top.textContent="Instructores LP";
+  const u=S.usuario, ini=(u.nombre||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  who.innerHTML=`<details class="menu" id="menuCuenta"><summary aria-label="Tu cuenta"><span class="avatar">${esc(ini)}</span><span class="lbl" style="font-weight:600;color:var(--ink)">${esc(u.nombre)}</span><span class="pill ${u.rol==="admin"?"acc":"info"} lbl" style="padding:1px 8px">${esc(u.rolTxt)}</span></summary>
+    <div class="menu-pop" role="menu"><div class="mh"><b>${esc(u.nombre)}</b><span class="hint mono">BP ${esc(u.bp)}</span>${u.correo?`<span class="hint">${esc(u.correo)}</span>`:""}<span class="hint">${esc(u.rolTxt)}</span></div>
+      <button type="button" data-act="cambiarClave" role="menuitem">Cambiar contraseña</button>
+      <button type="button" data-act="salir" class="danger" role="menuitem">Cerrar sesión</button></div></details>`;
+}
+function render(){
+  window.__appIniciada=true;
+  DR={}; drn=0; $("#tip").hidden=true;
+  if(S.usuario && S.listo && S.mes) asignarPerfiles(MO, S.mes.slice(0,4));
+  pintarCabecera();
+  const app=$("#app");
+  if(!S.usuario) app.innerHTML=vistaLogin();
+  else if(!S.listo) return;
+  else app.innerHTML=vistaShell();
+  wire();
+}
+function mesNav(){
+  const i=MO.orden.indexOf(S.mes), h=mesHoy();
+  return `<div class="mesnav" role="group" aria-label="Mes"><button data-messtep="-1" ${i<=0?"disabled":""} aria-label="Mes anterior">‹</button>
+    <select id="selMes" aria-label="Elegir mes">${MO.orden.map(m=>`<option value="${m}" ${m===S.mes?"selected":""}>${mesLargo(m)}${m===h?" · en curso":m>h?" · próximo":""}</option>`).join("")}</select>
+    <button data-messtep="1" ${i>=MO.orden.length-1?"disabled":""} aria-label="Mes siguiente">›</button></div>`;
+}
+function irAMes(m){ if(!MO.orden.includes(m)) return; S.mes=m; S.uFiltroMes=null; S.dia=null; render(); }
+
+/* ============ Inicio de sesión ============ */
+function campoClave(id, label, auto, extra){
+  return `<div class="field"><label for="${id}">${label}</label><div class="pw"><input class="input" id="${id}" type="password" autocomplete="${auto}" required ${extra||""}><button type="button" class="pw-toggle" data-pw="${id}" aria-label="Mostrar contraseña">Mostrar</button></div></div>`;
+}
+function reqsHTML(){ return `<ul class="reqs" id="reqs"><li data-r="len">Al menos 8 caracteres</li><li data-r="mix">Letras y números</li><li data-r="bp">No contiene tu BP</li><li data-r="eq">Las dos coinciden</li></ul>`; }
+function vistaLogin(){
+  const L=S.login;
+  const msg=(L.err?`<div class="msg err" role="alert">${esc(L.err)}</div>`:"")+(L.ok?`<div class="msg ok" role="status">${esc(L.ok)}</div>`:"");
+  let form="";
+  if(L.modo==="login") form=`
+    <div><span class="eyebrow">Acceso</span><h2>Iniciar sesión</h2><p class="sub">Ingresa con tu BP o tu correo corporativo.</p></div>
+    ${msg}
+    <form class="auth-form" id="fLogin" novalidate>
+      <div class="field"><label for="lgUser">Usuario</label><input class="input" id="lgUser" autocomplete="username" inputmode="email" placeholder="BP o correo corporativo" value="${esc(L.usuario)}" required></div>
+      ${campoClave("lgPass","Contraseña","current-password")}
+      <div class="auth-row"><label class="check"><input type="checkbox" id="lgRec"> Mantener mi sesión iniciada</label><button type="button" class="btn ghost sm" data-lmodo="olvido">¿Olvidaste tu contraseña?</button></div>
+      <button class="btn primary block" type="submit" id="lgBtn">Ingresar</button>
+    </form>
+    <div class="divider">¿Primera vez?</div>
+    <button class="btn block" type="button" data-lmodo="activar">Activar cuenta o usar un código</button>
+    ${L.google?`<button class="btn block" type="button" id="lgGoogle">Continuar como ${esc(L.google)}</button>`:""}`;
+  else if(L.modo==="activar") form=`
+    <div><span class="eyebrow">Primer ingreso o restablecer</span><h2>Crea tu contraseña</h2><p class="sub">Usa el código temporal que te dio coordinación o que llegó a tu correo. Sirve una sola vez.</p></div>
+    ${msg}
+    <form class="auth-form" id="fActivar" novalidate>
+      <div class="field"><label for="acUser">Usuario</label><input class="input" id="acUser" autocomplete="username" placeholder="BP o correo corporativo" value="${esc(L.usuario)}" required></div>
+      <div class="field"><label for="acCode">Código temporal</label><input class="input code" id="acCode" autocomplete="one-time-code" placeholder="XXXX-XXXX" maxlength="12" required></div>
+      ${campoClave("acPass","Nueva contraseña","new-password")}
+      ${campoClave("acPass2","Repite la contraseña","new-password")}
+      ${reqsHTML()}
+      <label class="check"><input type="checkbox" id="acRec"> Mantener mi sesión iniciada</label>
+      <button class="btn primary block" type="submit" id="acBtn">Crear contraseña e ingresar</button>
+    </form>
+    <button class="btn ghost" type="button" data-lmodo="login">← Volver a iniciar sesión</button>`;
+  else form=`
+    <div><span class="eyebrow">Restablecer contraseña</span><h2>¿Olvidaste tu contraseña?</h2><p class="sub">Si tu usuario tiene correo corporativo registrado, te enviaremos un código. Si no, pídeselo a coordinación.</p></div>
+    ${msg}
+    <form class="auth-form" id="fOlvido" novalidate>
+      <div class="field"><label for="olUser">Usuario</label><input class="input" id="olUser" autocomplete="username" placeholder="BP o correo corporativo" value="${esc(L.usuario)}" required></div>
+      <button class="btn primary block" type="submit" id="olBtn">Enviarme un código</button>
+    </form>
+    <button class="btn block" type="button" data-lmodo="activar">Ya tengo un código</button>
+    <button class="btn ghost" type="button" data-lmodo="login">← Volver a iniciar sesión</button>`;
+  return `<section class="auth"><div class="auth-card">
+    <div class="auth-side">
+      <div class="brand-mark" aria-hidden="true">${ICON_PLANE}</div>
+      <div><span class="eyebrow">Instructores LP · Freeze</span><h1>Rol de instructores</h1></div>
+      <p>Cada instructor ve su rol, sus vuelos y sus vacaciones. Coordinación ve el rol completo, los indicadores de equidad y las alertas.</p>
+      <ul class="feat"><li><i>1</i><span>Tu rol del mes, día por día, con el detalle de cada vuelo.</span></li><li><i>2</i><span>Confirma tu rol o avisa si algo no calza.</span></li><li><i>3</i><span>Vacaciones, viáticos y actividades del año.</span></li></ul>
+      <p class="small">Acceso solo para personas registradas y activas en la hoja Usuarios. Tu contraseña es personal: coordinación no puede verla.</p>
+      <div class="runway" aria-hidden="true"></div>
+    </div>
+    <div class="auth-main">${form}</div>
+  </div></section>`;
+}
+function setCargando(btn, on, txt){ if(!btn) return; if(on){ btn.dataset.txt=btn.innerHTML; btn.disabled=true; btn.innerHTML=`<span class="spin"></span>${esc(txt||"Un momento…")}`; } else { btn.disabled=false; if(btn.dataset.txt) btn.innerHTML=btn.dataset.txt; } }
+function actualizarReqs(passId, pass2Id, userId){
+  const p=($("#"+passId)||{}).value||"", p2=($("#"+pass2Id)||{}).value||"", u=(($("#"+userId)||{}).value||S.usuario&&S.usuario.bp||"").replace(/\D/g,"");
+  const set=(r,ok)=>{ const li=document.querySelector(`#reqs [data-r="${r}"]`); if(li) li.classList.toggle("ok",ok); };
+  set("len",p.length>=8); set("mix",/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(p)&&/\d/.test(p)); set("bp",!!p&&!(u&&u.length>=4&&p.includes(u))); set("eq",!!p&&p===p2);
+}
+function wireLogin(){
+  document.querySelectorAll("[data-lmodo]").forEach(b=>b.onclick=()=>{ const u=($("#lgUser")||$("#acUser")||$("#olUser")||{}).value; if(u!=null) S.login.usuario=u.trim(); S.login.modo=b.dataset.lmodo; S.login.err=""; S.login.ok=""; render(); const f=$(".auth-form input"); if(f) f.focus(); });
+  const fl=$("#fLogin");
+  if(fl){ (S.login.usuario?$("#lgPass"):$("#lgUser")).focus();
+    fl.onsubmit=async e=>{ e.preventDefault(); const u=$("#lgUser").value.trim(), p=$("#lgPass").value, rec=$("#lgRec").checked;
+      S.login.usuario=u;
+      if(!u||!p){ S.login.err="Escribe tu usuario y tu contraseña."; render(); return; }
+      setCargando($("#lgBtn"),true,"Verificando…");
+      try{ const r=await api("apiLogin",u,p,rec,dispositivo()); entrar(r); }
+      catch(err){ S.login.err=err.message; S.login.ok=""; render(); const pp=$("#lgPass"); if(pp) pp.focus(); } };
+  }
+  const fa=$("#fActivar");
+  if(fa){ const upd=()=>actualizarReqs("acPass","acPass2","acUser"); ["acPass","acPass2","acUser"].forEach(id=>$("#"+id).addEventListener("input",upd)); upd();
+    $("#acCode").addEventListener("input",e=>{ const v=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,8); e.target.value=v.length>4?v.slice(0,4)+"-"+v.slice(4):v; });
+    fa.onsubmit=async e=>{ e.preventDefault(); const u=$("#acUser").value.trim(), c=$("#acCode").value, p=$("#acPass").value, p2=$("#acPass2").value, rec=$("#acRec").checked;
+      S.login.usuario=u;
+      const fail=m=>{ S.login.err=m; S.login.ok=""; render(); };
+      if(!u||!c) return fail("Escribe tu usuario y el código temporal.");
+      if(p.length<8||!/\d/.test(p)||!/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(p)) return fail("La contraseña debe tener al menos 8 caracteres y combinar letras y números.");
+      if(p!==p2) return fail("Las contraseñas no coinciden.");
+      setCargando($("#acBtn"),true,"Creando tu contraseña…");
+      try{ const r=await api("apiActivar",u,c,p,rec,dispositivo()); entrar(r); toast("Listo. Tu contraseña quedó guardada."); }
+      catch(err){ fail(err.message); } };
+  }
+  const fo=$("#fOlvido");
+  if(fo) fo.onsubmit=async e=>{ e.preventDefault(); const u=$("#olUser").value.trim(); S.login.usuario=u;
+    if(!u){ S.login.err="Escribe tu BP o tu correo."; render(); return; }
+    setCargando($("#olBtn"),true,"Enviando…");
+    try{ const r=await api("apiSolicitarCodigo",u,dispositivo()); S.login.modo="activar"; S.login.ok=r.mensaje; S.login.err=""; render(); }
+    catch(err){ S.login.err=err.message; render(); } };
+  const g=$("#lgGoogle");
+  if(g) g.onclick=async()=>{ setCargando(g,true,"Ingresando…"); try{ entrar(await api("apiLoginGoogle",true,dispositivo())); }catch(err){ S.login.err=err.message; render(); } };
+}
+function entrar(r){
+  guardarToken(r.token, r.recordar);
+  S.token=r.token; S.usuario=r.usuario; S.listo=false;
+  S.login={modo:"login", usuario:"", err:"", ok:"", google:S.login.google};
+  S.tab=null; S.fuentes=null; S.adm=null; S.verBp=null; S.xlsxPrev=null;
+  cargarDatos(false); scrollTo(0,0);
+}
+async function salir(){
+  const t=S.token;
+  borrarToken(); S.token=null; S.usuario=null; S.listo=false; S.vistas=[];
+  S.login={modo:"login", usuario:"", err:"", ok:"Cerraste tu sesión.", google:S.login.google};
+  render();
+  try{ await api("apiLogout",t,dispositivo()); }catch(e){}
+}
+function abrirCambiarClave(){
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ccT"><h2 id="ccT">Cambiar contraseña</h2>
+    <form id="fCC" class="auth-form" novalidate>
+      ${campoClave("ccAct","Contraseña actual","current-password")}
+      ${campoClave("acPass","Nueva contraseña","new-password")}
+      ${campoClave("acPass2","Repite la nueva contraseña","new-password")}
+      ${reqsHTML()}
+      <p class="hint">Al cambiarla se cierran tus sesiones en otros dispositivos.</p>
+      <div class="msg err" id="ccErr" hidden></div>
+      <div class="row"><button class="btn primary" type="submit" id="ccBtn">Guardar</button><button class="btn" type="button" id="ccX">Cancelar</button></div>
+    </form></div>`;
+  document.body.appendChild(sc);
+  const close=()=>sc.remove(); $("#ccX",sc).onclick=close; sc.addEventListener("click",e=>{ if(e.target===sc) close(); });
+  wirePw(sc);
+  const upd=()=>actualizarReqs("acPass","acPass2",null); ["acPass","acPass2"].forEach(id=>$("#"+id,sc).addEventListener("input",upd)); upd();
+  const err=m=>{ const x=$("#ccErr",sc); x.textContent=m; x.hidden=false; };
+  $("#fCC",sc).onsubmit=async e=>{ e.preventDefault(); const a=$("#ccAct",sc).value, p=$("#acPass",sc).value, p2=$("#acPass2",sc).value;
+    if(!a) return err("Escribe tu contraseña actual."); if(p!==p2) return err("Las contraseñas nuevas no coinciden.");
+    if(p.length<8||!/\d/.test(p)||!/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(p)) return err("La contraseña debe tener al menos 8 caracteres y combinar letras y números.");
+    const b=$("#ccBtn",sc); setCargando(b,true,"Guardando…");
+    try{ const r=await api("apiCambiarClave",S.token,a,p,dispositivo()); guardarToken(r.token,r.recordar); S.token=r.token; close(); toast("Contraseña actualizada."); }
+    catch(x){ setCargando(b,false); err(x.message); } };
+  setTimeout(()=>$("#ccAct",sc).focus(),30);
+}
+function wirePw(root=document){ root.querySelectorAll("[data-pw]").forEach(b=>b.onclick=()=>{ const i=$("#"+b.dataset.pw, root.nodeType===9?document:root)||$("#"+b.dataset.pw); const ver=i.type==="password"; i.type=ver?"text":"password"; b.textContent=ver?"Ocultar":"Mostrar"; b.setAttribute("aria-label",ver?"Ocultar contraseña":"Mostrar contraseña"); }); }
+
+/* ============ Contenedor con pestañas ============ */
+function vistaShell(){
+  const sinDatos = !MO.orden.length || !S.mes;
+  const tabs=S.vistas;
+  if(tabs.length===1 && tabs[0]==="mi"){
+    if(sinDatos) return vacioRol();
+    return vistaUsuario(S.usuario.bp,false);
+  }
+  const conMes=["ind","seg","rol","dia"].includes(S.tab);
+  let body="";
+  if(sinDatos && !["cargar","usuarios"].includes(S.tab)) body=vacioRol();
+  else if(S.tab==="ind") body=admIndicadores();
+  else if(S.tab==="seg") body=admSeguimiento();
+  else if(S.tab==="rol") body=admMatriz();
+  else if(S.tab==="dia") body=admDia();
+  else if(S.tab==="inst") body=admInst();
+  else if(S.tab==="cargar") body=admCargar();
+  else if(S.tab==="usuarios") body=admUsuarios();
+  else if(S.tab==="mi") body=vistaUsuario(S.usuario.bp,false);
+  const titulo = S.tab==="ind"?"Indicadores del Freeze" : conMes? `Rol de ${mesInfo(S.mes).nombre} ${mesInfo(S.mes).y}` : TAB_NOMBRE[S.tab];
+  const encabezado = ["inst","mi"].includes(S.tab) ? "" :
+    `<div class="pagehead"><div><span class="eyebrow">${esAdmin()?"Panel de coordinación · Instructores LP":"Instructores LP"}</span><h1>${esc(titulo)}</h1></div>${conMes&&!sinDatos?mesNav():""}</div>`;
+  return `${encabezado}<div class="tabs" role="tablist">${tabs.map(k=>`<button class="tab" role="tab" aria-selected="${S.tab===k}" data-atab="${k}">${TAB_NOMBRE[k]}</button>`).join("")}</div>${body}`;
+}
+function vacioRol(){
+  return `<div class="card empty-state" style="margin-top:12px"><h2>Aún no hay roles cargados</h2><p class="hint">${esAdmin()?"Conecta el Google Sheet del mes en “Actualizar rol”.":"Coordinación todavía no publica el rol. Vuelve a revisar más tarde."}</p>${esAdmin()&&puede("cargar")?`<button class="btn primary" data-atab="cargar">Ir a Actualizar rol</button>`:""}</div>`;
+}
+
+
+/* ============ Eventos ============ */
+function wire(){
+  wirePw();
+  if(!S.usuario){ wireLogin(); return; }
+  document.querySelectorAll("#app [data-drill]").forEach(el=>el.addEventListener("click",e=>{ e.stopPropagation(); const f=DR[el.dataset.drill]; if(f) f(); }));
+  const sm=$("#selMes"); if(sm) sm.onchange=()=>irAMes(sm.value);
+  document.querySelectorAll("[data-messtep]").forEach(b=>b.onclick=()=>{ const i=MO.orden.indexOf(S.mes)+Number(b.dataset.messtep); if(MO.orden[i]) irAMes(MO.orden[i]); });
+  document.querySelectorAll("[data-atab]").forEach(b=>b.onclick=()=>{ S.tab=b.dataset.atab; if(S.tab==="cargar"){ S.fuentes=null; S.fuentesMsg=""; } if(S.tab==="usuarios") S.adm=null; render(); });
+  document.querySelectorAll("[data-modo]").forEach(b=>b.onclick=()=>{ S.modo=b.dataset.modo; render(); });
+  document.querySelectorAll("[data-vv]").forEach(b=>b.onclick=()=>{ S.vVuelo=b.dataset.vv; render(); });
+  document.querySelectorAll("[data-dm]").forEach(b=>b.onclick=()=>{ S.distModo=b.dataset.dm; render(); });
+  document.querySelectorAll("[data-ufm]").forEach(b=>b.onclick=()=>{ S.uFiltroMes=null; render(); });
+  document.querySelectorAll("[data-utipo]").forEach(b=>b.onclick=()=>{ S.uTipo=b.dataset.utipo; render(); });
+  document.querySelectorAll("[data-irmes]").forEach(b=>b.onclick=()=>irAMes(b.dataset.irmes));
+  document.querySelectorAll("[data-segf]").forEach(b=>b.onclick=()=>{ S.segFiltro=b.dataset.segf; render(); });
+  document.querySelectorAll("[data-act='confirmar']").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Guardando…");
+    try{ const r=await api("apiConfirmarRol",S.token,S.mes,dispositivo()); S.resp[S.mes+"_"+S.usuario.bp]=r; render(); toast("Rol confirmado. Gracias."); }catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-act='obsGeneral']").forEach(b=>b.onclick=()=>abrirObsGeneral(S.usuario.bp));
+  document.querySelectorAll("[data-resolver]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"…");
+    try{ const r=await api("apiResolverObs",S.token,b.dataset.mes,b.dataset.bp,b.dataset.resolver); S.resp[b.dataset.mes+"_"+b.dataset.bp]=r; render(); toast("Observación marcada como resuelta"); }catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("#app [data-verbp]").forEach(b=>b.onclick=()=>verInstructor(b.dataset.verbp));
+  document.querySelectorAll("[data-dsel]").forEach(b=>b.onclick=()=>{ S.dia=+b.dataset.dsel; render(); });
+  document.querySelectorAll("[data-filtro]").forEach(b=>b.onclick=()=>{ S.filtro=S.filtro===b.dataset.filtro?null:b.dataset.filtro; render(); });
+  const bu=$("#busca"); if(bu) bu.oninput=()=>{ S.busca=bu.value; clearTimeout(S._t); S._t=setTimeout(()=>{ render(); const n=$("#busca"); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } },220); };
+  const buU=$("#buscaU"); if(buU) buU.oninput=()=>{ S.buscaU=buU.value; clearTimeout(S._t); S._t=setTimeout(()=>{ render(); const n=$("#buscaU"); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } },220); };
+  document.querySelectorAll("[data-filu]").forEach(b=>b.onclick=()=>{ S.filtroU=b.dataset.filu; render(); });
+  const sv=$("#selVer"); if(sv) sv.onchange=()=>{ S.verBp=sv.value; S.uFiltroMes=null; render(); };
+  const sel=document.querySelector(".daybtn[aria-selected='true']"); if(sel) sel.scrollIntoView({block:"nearest",inline:"center"});
+  // Actualizar rol
+  const ff=$("#fFuente"); if(ff) ff.onsubmit=async e=>{ e.preventDefault(); const url=$("#fuUrl").value.trim(), mes=$("#fuMes").value, hoja=$("#fuHoja").value.trim(), out=$("#fuRes"), b=$("#fuBtn");
+    if(!url){ out.innerHTML=`<div class="msg err">Pega el enlace del Google Sheet.</div>`; return; }
+    setCargando(b,true,"Leyendo el archivo…"); out.innerHTML="";
+    try{ const r=await api("apiAgregarFuente",S.token,url,mes,hoja); S.fuentesMsg=resultadoSync([{...r,ok:true}]); toast(`${mesLargo(r.mes)} conectado: ${r.instructores} instructores`); S.fuentes=null; await recargar(); }
+    catch(x){ setCargando(b,false); S.fuentesMsg=`<div class="msg err">${esc(x.message)}</div>`; out.innerHTML=S.fuentesMsg; } };
+  document.querySelectorAll("[data-act='sincTodo'],[data-sinc]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Sincronizando…");
+    try{ const res=await api("apiSincronizar",S.token,b.dataset.sinc||""); S.fuentesMsg=resultadoSync(res); S.fuentes=null; await recargar(); toast(res.every(r=>r.ok)?"Sincronización completa":"Algunos meses no se pudieron leer"); }
+    catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-pausa]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"…");
+    try{ await api("apiActivarFuente",S.token,b.dataset.pausa,b.dataset.on==="1"); S.fuentes=null; render(); }catch(e){ setCargando(b,false); toast(e.message); } });
+  const au=$("#autoSync"); if(au) au.onchange=async()=>{ au.disabled=true;
+    try{ const on=await api("apiSincronizacionAutomatica",S.token,au.checked); S.fuentes.automatica=on; toast(on?"Se sincronizará cada hora":"Sincronización automática desactivada"); }catch(e){ au.checked=!au.checked; toast(e.message); } au.disabled=false; };
+  document.querySelectorAll("[data-act='recargarFuentes']").forEach(b=>b.onclick=()=>{ S.fuentes=null; render(); });
+  const fx=$("#fileX"), dr=$("#drop");
+  if(fx) fx.onchange=()=>{ if(fx.files[0]) leerExcel(fx.files[0]); };
+  if(dr){ dr.ondragover=e=>{e.preventDefault();dr.classList.add("over")}; dr.ondragleave=()=>dr.classList.remove("over"); dr.ondrop=e=>{ e.preventDefault(); dr.classList.remove("over"); if(e.dataTransfer.files[0]) leerExcel(e.dataTransfer.files[0]); }; }
+  const mx=$("#mesX"); if(mx) mx.onchange=()=>{ if(/^\d{4}-\d{2}$/.test(mx.value)){ const nd=mesInfo(mx.value).dias; S.xlsxPrev.mes=mx.value; S.xlsxPrev.instructores.forEach(i=>{ i.dias=Array.from({length:nd},(_,k)=>i.dias[k]||""); }); render(); } };
+  const dx=$("#descX"); if(dx) dx.onclick=()=>{ S.xlsxPrev=null; render(); };
+  const px=$("#pubX"); if(px) px.onclick=async()=>{ const pv=S.xlsxPrev; setCargando(px,true,"Publicando…");
+    try{ const r=await api("apiPublicarRol",S.token,{mes:pv.mes,instructores:pv.instructores,archivo:pv.archivo,hoja:pv.hoja});
+      S.xlsxPrev=null; S.fuentes=null; await recargar(); S.mes=r.mes; S.tab=puede("ind")?"ind":S.tab; render(); toast(`Rol de ${mesLargo(r.mes)} publicado${r.fuentePausada?" (se pausó su Google Sheet)":""}.`); }
+    catch(e){ setCargando(px,false); const x=$("#errX"); if(x) x.textContent=e.message; } };
+  // Usuarios
+  document.querySelectorAll("[data-act='recargarUsuarios']").forEach(b=>b.onclick=()=>{ S.adm=null; render(); });
+  document.querySelectorAll("[data-codigo]").forEach(b=>b.onclick=()=>abrirGenerarCodigo(b.dataset.codigo));
+  document.querySelectorAll("[data-cerrar]").forEach(b=>b.onclick=async()=>{ if(!confirm("¿Cerrar todas las sesiones abiertas de esta persona?")) return; setCargando(b,true,"…");
+    try{ await api("apiCerrarSesiones",S.token,b.dataset.cerrar); if(b.dataset.cerrar===S.usuario.bp) return; toast("Sesiones cerradas"); S.adm=null; render(); }catch(e){ setCargando(b,false); toast(e.message); } });
+}
+/* Menú de cuenta y acciones globales (delegación) */
+document.addEventListener("click",e=>{
+  const m=$("#menuCuenta"); if(m && m.open && !m.contains(e.target)) m.open=false;
+  const a=e.target.closest&&e.target.closest("#who [data-act]"); if(!a) return;
+  if(m) m.open=false;
+  if(a.dataset.act==="salir") salir();
+  if(a.dataset.act==="cambiarClave") abrirCambiarClave();
+});
+(function(){ const tip=$("#tip");
+  document.addEventListener("pointermove",e=>{ if(e.pointerType==="touch") return; const el=e.target.closest&&e.target.closest("[data-tip]"); if(!el||!el.dataset.tip){ tip.hidden=true; return; }
+    tip.innerHTML=el.dataset.tip; tip.hidden=false; const r=tip.getBoundingClientRect(); let L=e.clientX+14, T=e.clientY+14; if(L+r.width>innerWidth-8) L=e.clientX-r.width-14; if(T+r.height>innerHeight-8) T=e.clientY-r.height-14; tip.style.left=Math.max(8,L)+"px"; tip.style.top=Math.max(8,T)+"px"; });
+  document.addEventListener("scroll",()=>tip.hidden=true,true); })();
+function toast(t){ const d=document.createElement("div"); d.className="toast"; d.setAttribute("role","status"); d.textContent=t; document.body.appendChild(d); setTimeout(()=>d.remove(),3200); }
+
+window.__archivos=(window.__archivos||{}); window.__archivos["App"]="v2.3";
+</script>

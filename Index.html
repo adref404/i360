@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="rol-version" content="Index v2.3">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Rol de instructores LP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <?!= include('Estilos'); ?>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg></div>
+      <div><b>Rol de instructores LP</b><small id="topMes">Instructores LP</small></div>
+    </div>
+    <div class="sp"></div>
+    <div class="who" id="who"></div>
+  </div>
+</header>
+<main id="app"><div class="loading"><span class="spin"></span><span>Cargando…</span><small class="hint">Versión <?= version ?></small></div></main>
+<div class="tip" id="tip" hidden></div>
+<script>
+/* Vigilante de arranque: si algo impide iniciar, muestra la causa en lugar de "Cargando…" para siempre.
+   Va ANTES de los demás archivos para capturar también errores de sintaxis con su línea. */
+(function(){
+  var VERSION = '<?= version ?>';
+  window.__archivos = {};
+  function e(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function falla(titulo, detalle){
+    if (window.__appIniciada) { console.error(titulo, detalle); return; }
+    window.__appIniciada = true;
+    var app = document.getElementById('app'); if (!app) return;
+    app.innerHTML = '<div class="card stack" style="max-width:720px;margin:40px auto 0;gap:12px">' +
+      '<span class="eyebrow">Versión ' + e(VERSION) + '</span><h2>' + e(titulo) + '</h2>' +
+      (detalle ? '<div class="msg err" style="font-family:var(--f-mono);font-size:12.5px;white-space:pre-wrap">' + e(detalle) + '</div>' : '') +
+      '<p class="sub"><b>Causas más comunes:</b></p><ol class="sub" style="margin:0;padding-left:20px;display:grid;gap:6px">' +
+      '<li>Un archivo HTML se pegó <b>incompleto</b> (el editor a veces corta textos largos). Vuelve a copiar ese archivo completo desde el zip; su última línea debe ser <b>&lt;/script&gt;</b>.</li>' +
+      '<li>Los archivos HTML no se llaman exactamente <b>Index, Estilos, Clasificador, App, Vistas, Coordinacion, Admin</b>, o quedaron los antiguos <b>Server.gs</b> / <b>Index.html</b>.</li>' +
+      '<li>La implementación no tiene la última versión: <b>Implementar › Gestionar implementaciones › lápiz › Versión: Nueva versión</b>.</li>' +
+      '<li><b>Varias cuentas de Google abiertas</b> en este navegador: prueba en una <b>ventana de incógnito</b> con tu cuenta corporativa.</li></ol>' +
+      '<p class="hint">Diagnóstico completo: agrega <b>?diag=1</b> al final de la dirección de la app (…/exec?diag=1).</p>' +
+      '<div class="row"><button class="btn primary" onclick="location.reload()">Reintentar</button></div></div>';
+  }
+  window.__fallaArranque = falla;
+  window.__cargando = true;
+  window.addEventListener('error', function(ev){
+    var msg = (ev.message || 'Error') + (ev.lineno ? '\nLínea ' + ev.lineno + ' de la página' : '');
+    if (window.__cargando) { window.__errorCarga = window.__errorCarga || msg; return; }
+    falla('La aplicación encontró un error al iniciar', (ev.message || 'Error') + (ev.lineno ? '\nLínea ' + ev.lineno + ' de la página' : '') + (ev.error && ev.error.stack ? '\n' + ev.error.stack.split('\n').slice(0, 3).join('\n') : ''));
+  });
+  window.addEventListener('unhandledrejection', function(ev){ var r = ev.reason; falla('La aplicación encontró un error al iniciar', r && r.message ? r.message : String(r)); });
+  setTimeout(function(){ if (!window.__appIniciada) falla('El servidor no respondió', 'Pasaron 50 segundos sin respuesta de Apps Script.'); }, 50000);
+})();
+</script>
+<?!= include('Clasificador'); ?>
+<?!= include('App'); ?>
+<?!= include('Vistas'); ?>
+<?!= include('Coordinacion'); ?>
+<?!= include('Admin'); ?>
+<script>
+(function(){
+  window.__cargando = false;
+  var faltan = ['Clasificador', 'App', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
+  var tecnico = window.__errorCarga ? '\n\nDetalle técnico: ' + window.__errorCarga : '';
+  if (faltan.length) {
+    window.__fallaArranque('Archivo incompleto o con error: ' + faltan.join(', '),
+      'No terminó de cargar: ' + faltan.join(', ') + '.\nLo más probable es que se haya pegado incompleto en el editor de Apps Script. Ábrelo, borra todo su contenido y vuelve a pegar el archivo completo del zip (la última línea debe ser <\/script>).\nEl diagnóstico (…/exec?diag=1) indica exactamente qué falla.' + tecnico);
+    return;
+  }
+  if (window.__errorCarga) { window.__fallaArranque('La aplicación encontró un error al iniciar', window.__errorCarga); return; }
+  if (!(window.google && google.script && google.script.run)) { window.__fallaArranque('No hay conexión con Apps Script', 'google.script.run no está disponible en esta página.'); return; }
+  boot();
+})();
+</script>
+</body>
+</html>

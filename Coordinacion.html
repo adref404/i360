@@ -1,0 +1,280 @@
+<script>
+/* Coordinacion — indicadores, seguimiento, rol completo, equipo por día, por instructor */
+/* ---------- Indicadores ---------- */
+function gruposPeriodo(meses){
+  const rows=Object.values(MO.personas).map(pe=>({pe,s:ST(pe.bp,meses)})).filter(r=>r.s.presente);
+  const ok=r=>r.s.disp>=r.s.dias*0.4 && r.pe.perfil!=="nd";
+  return { todos:rows, comp:rows.filter(ok), vuelo:rows.filter(r=>ok(r)&&r.pe.perfil==="vuelo"), tierra:rows.filter(r=>ok(r)&&r.pe.perfil==="tierra"), fuera:rows.filter(r=>!ok(r)) };
+}
+function nivelCV(cv){ return cv<0.15?{t:"Equilibrado",c:"ok",i:"✓"}: cv<0.30?{t:"Diferencias moderadas",c:"mid",i:"!"}:{t:"Desigual",c:"bad",i:"!!"}; }
+function evidencia(n, meses){
+  if(n<6) return {t:"No concluyente",c:"nc",d:"muestra pequeña"};
+  if(n<15||meses<3) return {t:"Señal",c:"",d:"conviene confirmar con más meses"};
+  return {t:"Evidencia sólida",c:"",d:""};
+}
+function calcIndicadores(){
+  const meses=PER(); const G=gruposPeriodo(meses);
+  const V=G.vuelo, T=G.tierra, C=G.comp;
+  const tasas=V.map(r=>r.s.tasaVin), mV=media(tasas), cvV=mV?desv(tasas)/mV:0;
+  const cargas=C.map(r=>r.s.carga), mC=media(cargas), cvC=mC?desv(cargas)/mC:0;
+  const viajes=V.map(r=>({r,v:r.s.viajes})).sort((a,b)=>b.v-a.v);
+  const totViajes=viajes.reduce((a,x)=>a+x.v,0);
+  const dispV=V.reduce((a,r)=>a+r.s.disp,0);
+  const top3=viajes.slice(0,3); const top3v=top3.reduce((a,x)=>a+x.v,0); const top3exp=top3.reduce((a,x)=>a+x.r.s.disp,0)/(dispV||1);
+  const vjTasas=V.map(r=>r.s.disp?r.s.viajes/r.s.disp*30:0), mVj=media(vjTasas), cvVj=mVj?desv(vjTasas)/mVj:0;
+  const iniT=T.map(r=>r.s.disp?(r.s.sub.Iniciales||0)/r.s.disp*30:0), mI=media(iniT), cvI=mI?desv(iniT)/mI:0;
+  return {meses,G,V,T,C,mV,cvV,mC,cvC,totViajes,top3,top3v,top3exp,cvVj,mVj,mI,cvI,
+    cargaMin:minArr(C.map(r=>r.s.carga)), cargaMax:maxArr(C.map(r=>r.s.carga)),
+    vinProm: media(V.map(r=>r.s.vin)), vjProm: media(V.map(r=>r.s.viajes))};
+}
+const periodoTxt = () => S.modo==="mes" ? mesLargo(S.mes) : (mesInfo(S.mes).m===1 ? mesLargo(S.mes) : `Enero a ${mesInfo(S.mes).nombre} ${mesInfo(S.mes).y}`);
+function alertas(I){
+  const out=[]; const nm=I.meses.length, per=I.meses;
+  const evV=evidencia(I.vinProm,nm);
+  I.V.forEach(r=>{ const dev=I.mV?(r.s.tasaVin-I.mV)/I.mV:0;
+    if(Math.abs(dev)>=0.25){ const alto=dev>0;
+      out.push({sev:Math.abs(dev)>=0.4&&evV.c!=="nc"?"alta":"media", ev:evV.t, titulo:`${alto?"Más":"Menos"} vuelos que su grupo: ${r.pe.nombre}`,
+        texto:`${f1(r.s.tasaVin)} vuelos por mes disponible frente a ${f1(I.mV)} del grupo de vuelo (${dev>0?"+":""}${Math.round(dev*100)}%). ${r.s.vin} vuelos en ${r.s.disp} días disponibles.`,
+        tags:["Vuelos"], fn:()=>abrirDrill(`Vuelos de ${esc(r.pe.nombre)}`,periodoTxt(),regsDe([r.pe.bp],per,x=>x.x.k==="VIN"),`<div class="note">Hipótesis a revisar: habilitaciones de flota, vacaciones cerca de vuelos programados o solicitudes especiales. El dato por sí solo no prueba una asignación injusta.</div>`)}); } });
+  if(I.totViajes>0){ const share=I.top3v/I.totViajes;
+    if(share>I.top3exp*1.25){ out.push({sev:share>I.top3exp*1.5?"alta":"media", ev:evidencia(I.vjProm,nm).t, titulo:`Viajes con viático concentrados`,
+      texto:`${I.top3.map(x=>x.r.pe.nombre.split(" ")[0]).join(", ")} suman ${pct(share)} de los viajes con pernocta; por disponibilidad les correspondería cerca de ${pct(I.top3exp)}.`,
+      tags:["Viáticos"], fn:()=>abrirDrill("Viajes con viático",periodoTxt(),regsDe(I.top3.map(x=>x.r.pe.bp),per,x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA")))}); } }
+  const wbT=I.V.reduce((a,r)=>a+r.s.vinWB,0), nbT=I.V.reduce((a,r)=>a+r.s.vinNB,0), wbS=wbT/((wbT+nbT)||1);
+  I.V.forEach(r=>{ const n=r.s.vinWB+r.s.vinNB; if(n<10) return; const w=r.s.vinWB/n;
+    if(Math.abs(w-wbS)>=0.22) out.push({sev:"info", ev:evidencia(n,nm).t, titulo:`Mezcla de flota distinta: ${r.pe.nombre}`,
+      texto:`${pct(w)} de sus vuelos son WB (B767/B787), frente a ${pct(wbS)} del grupo. Los WB concentran los viajes con viático.${r.pe.flota&&!/787/.test(r.pe.flota)?" No figura habilitación B787 en Usuarios.":""}`,
+      tags:["Flota"], fn:()=>abrirDrill(`Vuelos WB y NB · ${esc(r.pe.nombre)}`,periodoTxt(),regsDe([r.pe.bp],per,x=>x.x.k==="VIN"))}); });
+  const conc=[["RES",null,"Reserva IET",I.C],["IET","Iniciales","Iniciales",I.T],["IET","RTI (recurrentes)","RTI",I.C]];
+  conc.forEach(([k,sub,lab,grp])=>{ const tot=grp.reduce((a,r)=>a+(sub?(r.s.sub[sub]||0):(r.s.cnt[k]||0)),0), disp=grp.reduce((a,r)=>a+r.s.disp,0); if(tot<10) return;
+    grp.forEach(r=>{ const n=sub?(r.s.sub[sub]||0):(r.s.cnt[k]||0); const exp=tot*r.s.disp/disp; const ratio=exp?n/exp:0;
+      if(n>=5 && ratio>=1.6) out.push({sev:"media", ev:evidencia(exp,nm).t, titulo:`${lab} concentrada en ${r.pe.nombre}`,
+        texto:`${n} días frente a ${f1(exp)} esperados según su disponibilidad (×${f1(ratio)}).`, tags:[lab], fn:()=>abrirDrill(`${lab} · ${esc(r.pe.nombre)}`,periodoTxt(),regsDe([r.pe.bp],per,x=>x.x.k===k&&(!sub||x.x.sub===sub)))}); }); });
+  const aud=I.C.filter(r=>(r.s.cnt.AUD||0)>0); const audT=I.C.reduce((a,r)=>a+(r.s.cnt.AUD||0),0);
+  if(audT>=5 && aud.length<=I.C.length*0.4) out.push({sev:"info", ev:"Dato", titulo:`Auditoría e IOSA en ${aud.length} personas`,
+    texto:`${audT} días de auditoría recaen en ${aud.map(r=>r.pe.nombre.split(" ")[0]).join(", ")}. Puede responder a la certificación de auditor; revisa si conviene ampliar el grupo.`, tags:["Auditoría"],
+    fn:()=>abrirDrill("Auditoría e IOSA",periodoTxt(),regsDe(aud.map(r=>r.pe.bp),per,x=>x.x.k==="AUD"))});
+  // Vacaciones: siempre sobre el año completo del mes elegido
+  const anio=mesesDelAnio(S.mes), y=mesInfo(S.mes).y;
+  Object.values(MO.personas).forEach(pe=>{ const s=ST(pe.bp,anio); if(!s.presente) return;
+    if(s.vac>30) out.push({sev:"info", ev:"Dato", titulo:`Vacaciones sobre 30 días: ${pe.nombre}`, texto:`${s.vac} días en el rol de ${y} (${s.vacFutura} aún programados). Probablemente incluye saldo de periodos anteriores.`, tags:["Vacaciones"], fn:()=>abrirDrill(`Vacaciones de ${esc(pe.nombre)}`,"Año "+y,regsDe([pe.bp],anio,x=>x.x.k==="VAC"))});
+    else if(s.vac<12 && pe.perfil!=="nd" && s.dias>200) out.push({sev:"media", ev:"Dato", titulo:`Pocas vacaciones: ${pe.nombre}`, texto:`${s.vac} de 30 días usados o programados en los meses cargados de ${y}. Riesgo de acumular saldo al cierre del año.`, tags:["Vacaciones"], fn:()=>abrirDrill(`Vacaciones de ${esc(pe.nombre)}`,"Año "+y,regsDe([pe.bp],anio,x=>x.x.k==="VAC"))});
+  });
+  const solNo=MO.solicitudes.filter(x=>per.some(m=>x.desde.startsWith(m)) && x.estado!=="asignado");
+  if(solNo.length) out.push({sev:"media", ev:"Dato", titulo:`${solNo.length} solicitud${solNo.length>1?"es":""} sin asignar`, texto:`Solicitudes registradas en ${periodoTxt().toLowerCase()} que no se asignaron o no tienen respuesta.`, tags:["Solicitudes"], fn:()=>abrirSolicitudes(solNo,"Solicitudes sin asignar",periodoTxt())});
+  const sinM=gruposPeriodo([S.mes]).todos.filter(r=>r.s.sin>0);
+  if(sinM.length) out.push({sev:"media", ev:"Dato", titulo:`Días sin asignar en ${mesInfo(S.mes).nombre}`, texto:`${sinM.reduce((a,r)=>a+r.s.sin,0)} días vacíos en el rol: ${sinM.map(r=>r.pe.nombre).join(", ")}.`, tags:["Calidad del dato"], fn:()=>abrirDrill("Días sin asignar",mesLargo(S.mes),regsDe(sinM.map(r=>r.pe.bp),[S.mes],x=>x.x.k==="SIN"))});
+  Object.values(MO.personas).forEach(pe=>{ if(pe.bg&&pe.bg.expProgramada==="VENCIDO" && pe.meses[S.mes]) out.push({sev:"alta", ev:"Dato", titulo:`Experiencia reciente vencida: ${pe.nombre}`, texto:`Según la hoja Vigencias, su última experiencia reciente fue el ${pe.bg.ultimaExp?fmtISO(pe.bg.ultimaExp):"—"}.`, tags:["Vigencias"], fn:()=>verInstructor(pe.bp)}); });
+  if(I.G.fuera.length) out.push({sev:"info", ev:"Dato", titulo:`${I.G.fuera.length} persona${I.G.fuera.length>1?"s":""} fuera de la comparación`, texto:`${I.G.fuera.map(r=>r.pe.nombre).join(", ")}: disponibilidad baja en el periodo (licencia, descanso médico o ingreso parcial). No se incluyen en los indicadores de equidad.`, tags:["Disponibilidad"],
+    fn:()=>abrirDrill("Ausencias en el periodo",periodoTxt(),regsDe(I.G.fuera.map(r=>r.pe.bp),per,x=>["VAC","DM","LIC"].includes(x.x.k)))});
+  const ordS={alta:0,media:1,info:2}; return out.sort((a,b)=>ordS[a.sev]-ordS[b.sev]);
+}
+function abrirSolicitudes(list, titulo, sub){
+  const html=list.length?`<div class="dgroup">${list.map(x=>`<div class="drow"><span class="dt">${x.desde.slice(8)}/${x.desde.slice(5,7)}</span><span><b>${esc(x.nombre)}</b><div class="mt">${esc(x.tipo)}${x.hasta&&x.hasta!==x.desde?` · hasta ${fmtISO(x.hasta)}`:""}</div></span><span class="pill ${x.estado==="asignado"?"good":x.estado==="no se asignó"?"crit":""}">${x.estado==="asignado"?"Asignada":x.estado==="no se asignó"?"No asignada":"Sin respuesta"}</span></div>`).join("")}</div>`:`<p class="empty">Sin solicitudes.</p>`;
+  abrirPanel(titulo, `${sub||periodoTxt()} · ${list.length} solicitud${list.length===1?"":"es"}`, html);
+}
+const irA = id => ()=>{ const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:"smooth",block:"center"}); };
+
+function admIndicadores(){
+  const I=calcIndicadores(); const A=alertas(I); const per=I.meses; const mi=mesInfo(S.mes);
+  const nV=nivelCV(I.cvV), nC=nivelCV(I.cvC), nVj=nivelCV(I.cvVj);
+  const evV=evidencia(I.vinProm,per.length), evJ=evidencia(I.vjProm,per.length);
+  const G=I.G;
+  const allB=G.todos.map(r=>r.pe.bp);
+  const totVin=G.todos.reduce((a,r)=>a+r.s.vin,0);
+  const prevMes=MO.orden[MO.orden.indexOf(S.mes)-1];
+  let delta=""; if(S.modo==="mes"&&prevMes){ const pv=gruposPeriodo([prevMes]).todos.reduce((a,r)=>a+r.s.vin,0); const d=totVin-pv; delta=`<span class="${d>=0?"delta-up":"delta-dn"}">${d>=0?"▲":"▼"} ${Math.abs(d)}</span> vs ${mesCorto(prevMes)}`; }
+  const wb=G.todos.reduce((a,r)=>a+r.s.vinWB,0), nb=G.todos.reduce((a,r)=>a+r.s.vinNB,0);
+  const mesesY=mesesDelAnio(S.mes);
+  const vacRows=Object.values(MO.personas).map(pe=>({pe,s:ST(pe.bp,mesesY)})).filter(r=>r.s.presente&&r.pe.perfil!=="nd");
+  const vacSobre=vacRows.filter(r=>r.s.vac>30).length;
+  const vacPer=G.todos.reduce((a,r)=>a+(r.s.cnt.VAC||0),0);
+  const sols=MO.solicitudes.filter(x=>per.some(m=>x.desde.startsWith(m))); const solOk=sols.filter(x=>x.estado==="asignado").length;
+  const kpis=`<div class="kpis">
+    <button class="kpi" ${drill(()=>abrirDrill("Vuelos de instrucción",periodoTxt(),regsDe(allB,per,x=>x.x.k==="VIN")))}><span class="l">Vuelos de instrucción</span><span class="v num">${totVin}</span><span class="d">${delta||`${wb} WB · ${nb} NB`}</span><span class="go">Ver vuelos</span></button>
+    <button class="kpi" ${drill(irA("rkVuelos"))}><span class="l">Equidad de vuelos</span><span class="v">${I.V.length?nV.t.split(" ")[0]:"—"}</span><span class="d">${I.V.length?`Variación ${pct(I.cvV)} en el grupo de vuelo`:"Sin grupo de vuelo en el periodo"}</span><span class="go">Ver ranking</span></button>
+    <button class="kpi" ${drill(()=>abrirDrill("Viajes con viático",periodoTxt(),regsDe(allB,per,x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"))))}><span class="l">Viajes con viático</span><span class="v num">${G.todos.reduce((a,r)=>a+r.s.viajes,0)}</span><span class="d">Top 3: ${I.totViajes?pct(I.top3v/I.totViajes):"—"} del total</span><span class="go">Ver viajes</span></button>
+    <button class="kpi" ${drill(irA("compTiempo"))}><span class="l">Días disponibles ocupados</span><span class="v num">${I.C.length?pct(I.mC):"—"}</span><span class="d">${I.C.length?`Rango ${pct(I.cargaMin)}–${pct(I.cargaMax)}`:"Sin datos"}</span><span class="go">Ver reparto</span></button>
+    <button class="kpi" ${drill(()=>abrirDrill("Vacaciones",periodoTxt(),regsDe(allB,per,x=>x.x.k==="VAC")))}><span class="l">Vacaciones · ${S.modo==="mes"?mesCorto(S.mes):"ene–"+mesCorto(S.mes)}</span><span class="v num">${vacPer}<small> días</small></span><span class="d">${vacSobre} persona${vacSobre===1?"":"s"} sobre 30 días en ${mi.y}</span><span class="go">Ver fechas</span></button>
+    <button class="kpi" ${drill(()=>abrirSolicitudes(sols,"Solicitudes del periodo"))}><span class="l">Solicitudes atendidas</span><span class="v num">${sols.length?pct(solOk/sols.length):"—"}</span><span class="d">${solOk} de ${sols.length} asignadas</span><span class="go">Ver solicitudes</span></button>
+  </div>`;
+  const verd=(t,n,ev,txt,fn)=>`<button class="verdict" ${drill(fn)}><span class="ic ${ev.c==="nc"?"nc":n.c}">${ev.c==="nc"?"?":n.i}</span><span><b>${t}: ${ev.c==="nc"?"no concluyente":n.t.toLowerCase()}</b><p>${txt}</p><span class="evid">${ev.t}${ev.d?` · ${ev.d}`:""}</span></span></button>`;
+  const vOrd=I.V.slice().sort((a,b)=>a.s.tasaVin-b.s.tasaVin), vmin=vOrd[0], vmax=vOrd[vOrd.length-1];
+  const verdicts=`<div class="verdicts">
+    ${verd("Vuelos de instrucción",nV,evV, vmin&&vmax?`Entre ${f1(vmin.s.tasaVin)} (${esc(vmin.pe.nombre.split(" ")[0])}) y ${f1(vmax.s.tasaVin)} (${esc(vmax.pe.nombre.split(" ")[0])}) vuelos por mes disponible; promedio ${f1(I.mV)}.`:"Sin datos en el periodo.", irA("rkVuelos"))}
+    ${verd("Carga total",nC,evidencia(30*I.mC,per.length), I.C.length?`Todos ocupan entre ${pct(I.cargaMin)} y ${pct(I.cargaMax)} de sus días disponibles.`:"Sin datos en el periodo.", irA("compTiempo"))}
+    ${verd("Viajes con viático",nVj,evJ, `Los 3 con más viajes suman ${I.totViajes?pct(I.top3v/I.totViajes):"—"}; por disponibilidad les tocaría cerca de ${pct(I.top3exp)}.`, ()=>abrirDrill("Viajes con viático",periodoTxt(),regsDe(I.V.map(r=>r.pe.bp),per,x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"))))}
+  </div>`;
+  // Ranking vuelos
+  const val = r => S.vVuelo==="tasa"? r.s.tasaVin : r.s.vin;
+  const Vs=I.V.slice().sort((a,b)=>val(b)-val(a)), Ts=I.T.slice().sort((a,b)=>val(b)-val(a));
+  const maxR=Math.max(1,...Vs.concat(Ts).map(val))*1.08; const mR=media(I.V.map(val));
+  const rrow=r=>{ const v=val(r); const dev=mR?(v-mR)/mR:0; const grp=(r.pe.perfil==="vuelo"?I.V:I.T);
+    return `<div class="rowhit" ${drill(()=>drillStats({bp:r.pe.bp,meses:per,pred:x=>x.x.k==="VIN",grupo:grp.map(z=>z.pe.bp),titulo:`Vuelos de instrucción · ${esc(r.pe.nombre)}`,unidad:"Vuelos de instrucción",note:`${r.s.vin} vuelos en ${r.s.disp} días disponibles: ${f1(r.s.tasaVin)} por mes disponible frente a ${f1(media(grp.map(z=>z.s.tasaVin)))} de su grupo. ${r.s.viajes} viajes con viático.`}))} data-tip="${esc(`<b>${r.pe.nombre}</b><br>${r.s.vin} vuelos · ${r.s.disp} días disponibles<br>${f1(r.s.tasaVin)} por mes disponible<br>${r.s.vinWB} WB · ${r.s.vinNB} NB`)}">
+      <span class="nm">${esc(r.pe.nombre)}</span><span class="track">${r.pe.perfil==="vuelo"?`<span class="band" style="left:${mR*0.75/maxR*100}%;width:${mR*0.5/maxR*100}%"></span><span class="meanline" style="left:${mR/maxR*100}%"></span>`:""}<span class="bar ${r.pe.perfil==="vuelo"?"":"lo"}" style="width:${v/maxR*100}%"></span></span><span class="val num">${S.vVuelo==="tasa"?f1(v):v}${r.pe.perfil==="vuelo"&&Math.abs(dev)>=0.25?` <span style="color:${dev>0?"var(--crit)":"var(--warn)"}">${dev>0?"▲":"▼"}</span>`:""}</span></div>`; };
+  const ranking=`<div class="card" id="rkVuelos"><div class="chart-title"><div><h3>Vuelos de instrucción por instructor · ${esc(periodoTxt())}</h3><p>${S.vVuelo==="tasa"?"Vuelos por cada 30 días disponibles, para comparar a quien tuvo vacaciones o licencias con quien no.":"Cantidad de días en vuelo de instrucción."} La línea marca el promedio del grupo de vuelo y la franja, ±25%. Toca un nombre para ver sus vuelos.</p></div>
+    <div class="seg" role="group"><button aria-pressed="${S.vVuelo==="tasa"}" data-vv="tasa">Por disponibilidad</button><button aria-pressed="${S.vVuelo==="abs"}" data-vv="abs">Total</button></div></div>
+    <div class="rank"><div class="grp">Instructores con perfil de vuelo · ${Vs.length}</div>${Vs.map(rrow).join("")||`<p class="empty">Sin datos.</p>`}<div class="grp">Perfil de tierra (iniciales) · ${Ts.length}</div>${Ts.map(rrow).join("")||`<p class="empty">Sin datos.</p>`}</div>
+    <p class="hint" style="margin-top:10px">El perfil se deduce de ${mi.y}: vuelo si al menos 15% de sus días trabajados son vuelos de instrucción. Los resaltados están fuera de la franja.</p></div>`;
+  const alertHTML=`<div class="card"><div class="chart-title"><div><h3>Alertas y casos a revisar</h3><p>${A.filter(a=>a.sev==="alta").length} altas · ${A.filter(a=>a.sev==="media").length} medias · ${A.filter(a=>a.sev==="info").length} informativas. Una alerta es una señal para revisar, no una conclusión.</p></div></div>
+    <div class="alerts">${A.map(a=>`<button class="alert" ${drill(a.fn)}><span class="sv ${a.sev}">${a.sev==="alta"?"!!":a.sev==="media"?"!":"i"}</span><b>${esc(a.titulo)}</b><p>${esc(a.texto)}</p><span class="tags">${a.tags.map(t=>`<span class="pill">${esc(t)}</span>`).join("")}<span class="pill ${a.ev==="Evidencia sólida"?"acc":a.ev==="No concluyente"?"":"info"}">${esc(a.ev)}</span></span></button>`).join("")||`<p class="empty">Sin alertas en el periodo.</p>`}</div></div>`;
+  // Tendencia mensual
+  const tend=mesesY.map(m=>{ const g=gruposPeriodo([m]).todos; const c={}; WORK.forEach(k=>c[k]=g.reduce((a,r)=>a+(r.s.cnt[k]||0),0)); const n=g.length;
+    return {m,c,n,tot:WORK.reduce((a,k)=>a+c[k],0)}; });
+  const maxT=Math.max(1,...tend.map(t=>t.tot));
+  const tendHTML=`<div class="card"><div class="chart-title"><div><h3>Actividad del equipo mes a mes · ${mi.y}</h3><p>Días-persona por tipo de actividad. Toca un mes para ver sus indicadores.</p></div><div class="legend">${WORK.map(k=>`<span>${sw(k)}${KC[k].corto}</span>`).join("")}</div></div>
+    ${colsChart(tend.map(t=>({lab:mesCorto(t.m),sel:t.m===S.mes,total:t.tot,segs:WORK.map(k=>[k,t.c[k]]),tip:`<b>${mesLargo(t.m)}</b> · ${t.n} instructores<br>${WORK.map(k=>`<span class="r"><span>${KC[k].corto}</span><span>${t.c[k]}</span></span>`).join("")}`, click:()=>{ S.mes=t.m; S.modo="mes"; render(); }})), maxT, false)}</div>`;
+  // Heatmap persona x mes
+  const hmRows=Object.values(MO.personas).filter(pe=>pe.perfil!=="nd"&&mesesY.some(m=>pe.meses[m])).sort((a,b)=>(a.perfil===b.perfil?0:a.perfil==="vuelo"?-1:1)||a.nombre.localeCompare(b.nombre,"es"));
+  const allV=[]; hmRows.forEach(pe=>mesesY.forEach(m=>{ if(pe.meses[m]) allV.push(ST(pe.bp,[m]).vin); })); const maxH=Math.max(1,...allV);
+  const sCls=v=>"q"+qCount(v,maxH);
+  let lastP=null;
+  const hm=`<div class="card"><div class="chart-title"><div><h3>Vuelos de instrucción por persona y mes · ${mi.y}</h3><p>Semáforo de 5 niveles: verde, menos vuelos; rojo, más vuelos en el mes. Toca una celda para ver destinos, aviones y el detalle.</p></div>
+    ${legendCount(maxH)}</div>
+    <div class="hm-wrap"><table class="hm"><thead><tr><th></th>${mesesY.map(m=>`<th class="${m===S.mes?"sel":""}">${mesCorto(m)}</th>`).join("")}<th>Total</th></tr></thead><tbody>
+    ${hmRows.map(pe=>{ const g=pe.perfil!==lastP?`<tr class="grp"><th colspan="${mesesY.length+2}">${pe.perfil==="vuelo"?"Perfil de vuelo":"Perfil de tierra"}</th></tr>`:""; lastP=pe.perfil;
+      return g+`<tr><th class="nm" title="${esc(pe.nombre)}">${esc(pe.nombre)}</th>${mesesY.map(m=>{ if(!pe.meses[m]) return `<td><span class="c dna">·</span></td>`; const s=ST(pe.bp,[m]);
+        return `<td><button class="c ${sCls(s.vin)}" ${drill(()=>drillStats({bp:pe.bp,meses:[m],pred:x=>x.x.k==="VIN",grupo:hmRows.filter(z=>z.meses[m]&&z.perfil===pe.perfil).map(z=>z.bp),titulo:`Vuelos de instrucción · ${esc(pe.nombre)}`,sub:mesLargo(m),unidad:"Vuelos de instrucción"}))} data-tip="${esc(`<b>${pe.nombre} · ${mesLargo(m)}</b><br>${s.vin} vuelos · ${s.vac} días de vacaciones`)}">${s.vin}</button></td>`; }).join("")}
+        <td><b class="num">${ST(pe.bp,mesesY.filter(m=>pe.meses[m])).vin}</b></td></tr>`; }).join("")}</tbody></table></div></div>`;
+  // Matriz de concentración
+  const dims=[
+    {lab:"Vuelos WB",g:"V",f:s=>s.vinWB,pred:x=>x.x.k==="VIN"&&x.x.wb,base:x=>x.x.k==="VIN",baseLab:"De sus vuelos de instrucción"},
+    {lab:"Vuelos NB",g:"V",f:s=>s.vinNB,pred:x=>x.x.k==="VIN"&&x.x.nb&&!x.x.wb,base:x=>x.x.k==="VIN",baseLab:"De sus vuelos de instrucción"},
+    {lab:"Viajes con viático",g:"V",f:s=>s.viajes,pred:x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"),base:x=>x.x.k==="VIN"||x.x.k==="VHA",baseLab:"De sus días de vuelo"},
+    {lab:"Iniciales",g:"C",f:s=>s.sub.Iniciales||0,pred:x=>x.x.sub==="Iniciales"},
+    {lab:"RTI",g:"C",f:s=>s.sub["RTI (recurrentes)"]||0,pred:x=>x.x.sub==="RTI (recurrentes)"},
+    {lab:"Revas",g:"C",f:s=>s.sub["Revas de servicio"]||0,pred:x=>x.x.sub==="Revas de servicio"},
+    {lab:"Reserva IET",g:"C",f:s=>s.cnt.RES||0,pred:x=>x.x.k==="RES"},
+    {lab:"Auditoría",g:"C",f:s=>s.cnt.AUD||0,pred:x=>x.x.k==="AUD"},
+    {lab:"Vuelo propio",g:"C",f:s=>s.cnt.VHA||0,pred:x=>x.x.k==="VHA"},
+    {lab:"Días en blanco",g:"C",f:s=>s.blanco,pred:x=>x.x.k==="BLA"}
+  ];
+  dims.forEach(d=>{ const grp=d.g==="V"?I.V:I.C; d.tot=grp.reduce((a,r)=>a+d.f(r.s),0); d.disp=grp.reduce((a,r)=>a+r.s.disp,0); d.bps=new Set(grp.map(r=>r.pe.bp)); });
+  const dCls=(n,exp)=>{ if(exp<0.5&&n===0) return "q3"; const r=(n+0.5)/(exp+0.5); const l=Math.log2(r); return l<=-1?"q1":l<=-0.45?"q2":l<0.45?"q3":l<1?"q4":"q5"; };
+  const mxRows=I.C.slice().sort((a,b)=>(a.pe.perfil===b.pe.perfil?0:a.pe.perfil==="vuelo"?-1:1)||a.pe.nombre.localeCompare(b.pe.nombre,"es"));
+  lastP=null;
+  const conc=`<div class="card"><div class="chart-title"><div><h3>Concentración de actividades · ${esc(periodoTxt())}</h3><p>Cada celda compara lo que recibió cada persona con lo que le tocaría según sus días disponibles. Verde: bastante menos que su parte; rojo: bastante más. Los vuelos se comparan solo dentro del perfil de vuelo. Toca una celda para ver sus estadísticas.</p></div>
+    <div class="semleg"><span><i class="sw q1"></i>Mucho menos (&lt;0,5×)</span><span><i class="sw q2"></i>Menos (0,5–0,7×)</span><span><i class="sw q3"></i>En su parte (0,7–1,4×)</span><span><i class="sw q4"></i>Más (1,4–2×)</span><span><i class="sw q5"></i>Mucho más (&gt;2×)</span></div></div>
+    <div class="hm-wrap"><table class="hm"><thead><tr><th></th>${dims.map(d=>`<th style="white-space:normal;min-width:62px">${d.lab}</th>`).join("")}</tr></thead><tbody>
+    ${mxRows.map(r=>{ const g=r.pe.perfil!==lastP?`<tr class="grp"><th colspan="${dims.length+1}">${r.pe.perfil==="vuelo"?"Perfil de vuelo":"Perfil de tierra"}</th></tr>`:""; lastP=r.pe.perfil;
+      return g+`<tr><th class="nm" title="${esc(r.pe.nombre)}">${esc(r.pe.nombre)}</th>${dims.map(d=>{ if(!d.bps.has(r.pe.bp)) return `<td><span class="c dna">·</span></td>`; const n=d.f(r.s); const exp=d.disp?d.tot*r.s.disp/d.disp:0;
+        return `<td><button class="c ${dCls(n,exp)}" ${drill(()=>drillStats({bp:r.pe.bp,meses:per,pred:d.pred,grupo:[...d.bps],titulo:`${d.lab} · ${esc(r.pe.nombre)}`,unidad:d.lab,base:d.base,baseLab:d.baseLab,note:`${n} frente a ${f1(exp)} esperados según su disponibilidad (×${f1(exp?n/exp:0)}). Total del grupo: ${d.tot}.`}))} data-tip="${esc(`<b>${r.pe.nombre}</b><br>${d.lab}: ${n}<br>Esperado por disponibilidad: ${f1(exp)}`)}">${n}</button></td>`; }).join("")}</tr>`; }).join("")||`<tr><td class="empty">Sin datos en el periodo.</td></tr>`}</tbody></table></div></div>`;
+  // Vacaciones del año
+  const vacS=vacRows.slice().sort((a,b)=>b.s.vac-a.s.vac); const maxVac=Math.max(30,...vacS.map(r=>r.s.vac))*1.05;
+  const vacHTML=`<div class="card" id="vacChart"><div class="chart-title"><div><h3>Vacaciones ${mi.y} por persona</h3><p>Año completo (meses cargados). Días tomados (sólido) y programados (rayado). La línea marca los 30 días anuales. Toca un nombre para ver las fechas.</p></div>
+    <div class="legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--c-vac) 0 3px,color-mix(in srgb,var(--c-vac) 35%,var(--surface)) 3px 6px)"></i>Programadas</span></div></div>
+    <div class="vac">${vacS.map(r=>`<span class="nm" ${drill(()=>abrirDrill(`Vacaciones de ${esc(r.pe.nombre)}`,"Año "+mi.y,regsDe([r.pe.bp],mesesY,x=>x.x.k==="VAC")))} style="cursor:pointer">${esc(r.pe.nombre)}</span>
+      <span class="track" data-tip="${esc(`<b>${r.pe.nombre}</b><br>${r.s.vacPasada} tomados · ${r.s.vacFutura} programados<br>${r.s.vac>30?`${r.s.vac-30} sobre los 30`:`Saldo ${30-r.s.vac}`}`)}"><span class="u" style="width:${r.s.vacPasada/maxVac*100}%"></span><span class="f" style="width:${r.s.vacFutura/maxVac*100}%;border-radius:0 4px 4px 0"></span><span class="m30" style="left:${30/maxVac*100}%"></span></span>
+      <span class="val num" style="color:${r.s.vac>30?"var(--warn)":"var(--ink)"}">${r.s.vac}</span>`).join("")}</div>
+    <p class="hint" style="margin-top:10px">Quienes superan 30 días probablemente usan saldo de periodos anteriores, que el Freeze no registra.</p></div>`;
+  // Solicitudes por mes
+  const solM=mesesY.map(m=>{ const l=MO.solicitudes.filter(x=>x.desde.startsWith(m)); return {m,l,ok:l.filter(x=>x.estado==="asignado").length}; });
+  const maxS=Math.max(4,...solM.map(x=>x.l.length));
+  const sinSol=solM.filter(x=>!x.l.length).map(x=>mesInfo(x.m).nombre);
+  const solHTML=`<div class="card"><div class="chart-title"><div><h3>Solicitudes por mes · ${mi.y}</h3><p>Pedidos de jefatura y de instructores registrados en la hoja Solicitudes. Toca un mes para ver el detalle.</p></div><div class="legend"><span><i class="sw" style="background:var(--c-iet)"></i>Asignadas</span><span><i class="sw" style="background:var(--c-dm)"></i>No asignadas</span></div></div>
+    ${colsChartRaw(solM.map(x=>({lab:mesCorto(x.m),sel:x.m===S.mes,total:x.l.length,segs:[["var(--c-iet)",x.ok],["var(--c-dm)",x.l.length-x.ok]],tip:`<b>${mesLargo(x.m)}</b><br>${x.ok} asignadas de ${x.l.length}`,click:()=>abrirSolicitudes(x.l,"Solicitudes de "+mesLargo(x.m),mesLargo(x.m))})),maxS)}
+    ${sinSol.length?`<p class="hint" style="margin-top:8px">Sin solicitudes registradas en: ${sinSol.join(", ")}.</p>`:""}</div>`;
+  // Composición del tiempo
+  const TC=[["VIN","Vuelo INS",x=>x.x.k==="VIN"],["AUD","Auditoría",x=>x.x.k==="AUD"],["IET","Tierra",x=>x.x.k==="IET"],["RES","Reserva",x=>x.x.k==="RES"],["VHA","Vuelo propio",x=>x.x.k==="VHA"],["GES","Gestión",x=>x.x.k==="GES"],["BLA","Blanco",x=>x.x.k==="BLA"],["VAC","Vacaciones",x=>x.x.k==="VAC"],["AUS","Ausencias",x=>x.x.k==="DM"||x.x.k==="LIC"]];
+  const vcat=(s,k)=> !s.dias?0 : k==="AUS" ? ((s.cnt.DM||0)+(s.cnt.LIC||0))/s.dias : k==="OCU" ? s.carga : (s.cnt[k]||0)/s.dias;
+  const tRows=G.todos.slice().sort((a,b)=>(a.pe.perfil===b.pe.perfil?0:a.pe.perfil==="vuelo"?-1:a.pe.perfil==="tierra"&&b.pe.perfil==="nd"?-1:1)||a.pe.nombre.localeCompare(b.pe.nombre,"es"));
+  const cmpRows=G.comp; const cols=TC.map(c=>c[0]).concat(["OCU"]);
+  const colStat={}; cols.forEach(k=>{ const vs=cmpRows.map(r=>vcat(r.s,k)); colStat[k]={avg:media(vs),min:minArr(vs),max:maxArr(vs)}; });
+  const dif=S.distModo==="dif";
+  const fmtV=(v,k)=> dif ? ((v-colStat[k].avg)>=0?"+":"−")+Math.abs(Math.round((v-colStat[k].avg)*100)) : Math.round(v*100)+"%";
+  lastP=null;
+  const comp=`<div class="card" id="compTiempo"><div class="chart-title"><div><h3>Cómo se reparte el tiempo de cada instructor</h3><p>${esc(periodoTxt())}. ${dif?"Diferencia en puntos porcentuales frente al promedio del equipo en cada actividad.":"Porcentaje de los días del periodo que cada persona dedica a cada actividad."} Color por columna: verde, el valor más bajo del equipo; rojo, el más alto. Ocupación = días trabajados sobre días disponibles. Toca una celda para ver sus estadísticas.</p></div>
+    <div class="stack" style="gap:8px;align-items:flex-end"><div class="seg" role="group" aria-label="Valores"><button aria-pressed="${!dif}" data-dm="pct">% de su tiempo</button><button aria-pressed="${dif}" data-dm="dif">Vs. promedio del equipo</button></div>
+    <div class="semleg"><span>Menor</span>${[1,2,3,4,5].map(q=>`<i class="sw q${q}"></i>`).join("")}<span>Mayor</span></div></div></div>
+    <div class="hm-wrap"><table class="tt"><thead><tr><th class="nm"></th><th style="text-align:left">Reparto</th>${TC.map(c=>`<th>${c[1]}<small>prom. ${Math.round(colStat[c[0]].avg*100)}%</small></th>`).join("")}<th class="ocu">Ocupación<small>prom. ${Math.round(colStat.OCU.avg*100)}%</small></th></tr></thead><tbody>
+    ${tRows.map(r=>{ const g=r.pe.perfil!==lastP?`<tr class="grp"><th colspan="${TC.length+3}">${r.pe.perfil==="vuelo"?"Perfil de vuelo":r.pe.perfil==="tierra"?"Perfil de tierra":"Fuera de la comparación (ausencia prolongada)"}</th></tr>`:""; lastP=r.pe.perfil;
+      const nd=r.pe.perfil==="nd"||!cmpRows.includes(r);
+      return g+`<tr><th class="nm" title="${esc(r.pe.nombre)}">${esc(r.pe.nombre)}</th>
+        <td><span class="mini" data-tip="${esc(`<b>${r.pe.nombre}</b><br>${["VIN","AUD","IET","RES","VHA","GES","BLA","VAC","DM","LIC","CUM","FER","DO"].filter(k=>r.s.cnt[k]).map(k=>`<span class="r"><span>${KC[k].corto}</span><span>${r.s.cnt[k]} d</span></span>`).join("")}`)}">${["VIN","AUD","IET","RES","VHA","GES","BLA","VAC","DM","LIC","CUM","FER","DO","SIN"].filter(k=>r.s.cnt[k]).map(k=>`<span class="k-${k}" style="flex:${r.s.cnt[k]}"></span>`).join("")}</span></td>
+        ${cols.map(k=>{ const v=vcat(r.s,k); const st=colStat[k]; const q=nd?"dna":"q"+qBin(v,st.min,st.max); const c=TC.find(z=>z[0]===k);
+          const n=k==="OCU"?r.s.trab:k==="AUS"?(r.s.cnt.DM||0)+(r.s.cnt.LIC||0):(r.s.cnt[k]||0);
+          const lab=k==="OCU"?"Días trabajados":c[1];
+          const pred=k==="OCU"?(x=>TRABAJO.has(x.x.k)):c[2];
+          return `<td class="${k==="OCU"?"ocu":""}"><button class="c ${q}" ${drill(()=>drillStats({bp:r.pe.bp,meses:per,pred,grupo:cmpRows.map(z=>z.pe.bp),titulo:`${lab} · ${esc(r.pe.nombre)}`,unidad:lab,base:x=>true,baseLab:"De todos sus días del periodo",note:`${n} días: ${Math.round(v*100)}% ${k==="OCU"?"de sus días disponibles":"de su tiempo"}, frente a ${Math.round(st.avg*100)}% del promedio del equipo (rango ${Math.round(st.min*100)}–${Math.round(st.max*100)}%).`,color:k==="OCU"||k==="AUS"?"var(--accent)":KC[k].color}))} data-tip="${esc(`<b>${r.pe.nombre} · ${lab}</b><br>${n} días · ${Math.round(v*100)}%<br>Promedio del equipo: ${Math.round(st.avg*100)}%<br>Diferencia: ${fmtV(v,k).replace("%","")}${dif?" pp":""}`)}">${fmtV(v,k)}</button></td>`; }).join("")}</tr>`; }).join("")}</tbody></table></div></div>`;
+  const primero=mesesY[0], ultimo=mesesY[mesesY.length-1];
+  return `<div class="stack">
+    <div class="row between"><div class="seg" role="group" aria-label="Periodo"><button aria-pressed="${S.modo==="mes"}" data-modo="mes">${cap(mi.nombre)}</button><button aria-pressed="${S.modo==="anio"}" data-modo="anio">Acumulado ene–${mesCorto(S.mes)}</button></div>
+      <span class="hint">${S.modo==="mes"?`Solo ${mesLargo(S.mes)}. Un mes tiene pocos vuelos por persona: úsalo para detectar y el acumulado para concluir.`:`Acumulado de ${periodoTxt().toLowerCase()}.`}</span></div>
+    <div><h2 style="margin-bottom:10px">¿Estamos distribuyendo de forma equilibrada?</h2>${verdicts}</div>
+    ${kpis}
+    <div class="grid2">${ranking}${alertHTML}</div>
+    ${tendHTML}
+    ${hm}
+    ${conc}
+    ${comp}
+    <div class="grid2e">${vacHTML}${solHTML}</div>
+    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas Solicitudes, Vigencias y Usuarios. Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
+  </div>`;
+}
+
+/* ---------- Seguimiento del mes ---------- */
+function estadoInst(bp){ const r=respDe(bp); const ab=(r&&r.obs||[]).filter(o=>o.estado!=="resuelta").length;
+  if(ab) return {k:"obs",txt:`${ab} observación${ab>1?"es":""}`,cls:"crit"}; if(r&&r.confirmado) return {k:"ok",txt:"Confirmado",cls:"good"}; return {k:"pend",txt:"Pendiente",cls:"warn"}; }
+function admSeguimiento(){
+  const P=rosterMes(S.mes); const n=P.length; const est=P.map(i=>estadoInst(i.bp));
+  const ok=est.filter(e=>e.k==="ok").length, ob=est.filter(e=>e.k==="obs").length, pe=n-ok-ob;
+  const obsAll=[]; P.forEach(i=>{ const r=respDe(i.bp); (r&&r.obs||[]).forEach(o=>obsAll.push({i,o})); }); const ab=obsAll.filter(x=>x.o.estado!=="resuelta");
+  const sin=P.reduce((a,i)=>a+i.p.filter(x=>x.k==="SIN").length,0);
+  const act=["VIN","AUD","IET","RES","VHA","GES"]; const mi=mesInfo(S.mes);
+  const cols=[]; let max=0; for(let d=1; d<=mi.dias; d++){ const c={}; act.forEach(k=>c[k]=0); P.forEach(i=>{ const x=i.p[d-1]; if(x&&act.includes(x.k)) c[x.k]++; }); const t=act.reduce((a,k)=>a+c[k],0); max=Math.max(max,t); cols.push({d,c,t}); }
+  const filtros=[["pend","Pendientes",pe],["obs","Con observaciones",ob],["ok","Confirmados",ok],["todos","Todos",n]];
+  const lista=P.map((i,k)=>({i,e:est[k]})).filter(x=>S.segFiltro==="todos"||x.e.k===S.segFiltro).sort((a,b)=>a.i.nombre.localeCompare(b.i.nombre,"es"));
+  const editable=esEditable(S.mes);
+  return `<div class="stack">
+    ${!editable?`<div class="note">${mesLargo(S.mes)} ya pasó: las confirmaciones y observaciones quedan como registro y ya no se pueden modificar.</div>`:""}
+    <div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="kpi"><span class="l">Confirmaron su rol de ${mi.nombre}</span><span class="v num">${ok}<small> de ${n}</small></span><div class="meter"><span style="flex:${ok};background:var(--good)"></span><span style="flex:${ob};background:var(--crit)"></span><span style="flex:${pe};background:var(--line-2)"></span></div><span class="d">${pe} pendientes · ${ob} con observaciones</span></div>
+      <div class="kpi"><span class="l">Observaciones abiertas</span><span class="v num">${ab.length}</span><span class="d">${obsAll.length-ab.length} resueltas</span></div>
+      <button class="kpi" ${drill(()=>abrirDrill("Días sin asignar",mesLargo(S.mes),regsDe(P.map(i=>i.bp),[S.mes],x=>x.x.k==="SIN")))}><span class="l">Días sin asignar en el rol</span><span class="v num">${sin}</span><span class="go">Ver días</span></button>
+      <button class="kpi" ${drill(()=>abrirDrill("Viajes con viático",mesLargo(S.mes),regsDe(P.map(i=>i.bp),[S.mes],x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"))))}><span class="l">Viajes con viático</span><span class="v num">${P.reduce((a,i)=>a+ST(i.bp,[S.mes]).viajes,0)}</span><span class="go">Ver viajes</span></button>
+    </div>
+    <div class="card"><div class="chart-title"><div><h3>Instructores programados por día</h3><p>Toca una columna para ver el equipo de ese día.</p></div><div class="legend">${act.map(k=>`<span>${sw(k)}${KC[k].corto}</span>`).join("")}</div></div>
+      ${colsChart(cols.map(c=>({lab:String(c.d),sel:[0,6].includes(dowOf(S.mes,c.d)),total:0,segs:act.map(k=>[k,c.c[k]]),tip:`<b>${cap(DOW[dowOf(S.mes,c.d)])} ${c.d}</b><br>${act.map(k=>`<span class="r"><span>${KC[k].corto}</span><span>${c.c[k]}</span></span>`).join("")}<span class="r"><span>Programados</span><b>${c.t} de ${n}</b></span>`,click:puede("dia")?()=>{ S.dia=c.d; S.tab="dia"; render(); }:null})), max, false)}</div>
+    <div class="grid2e">
+      <div class="card"><h3 style="margin-bottom:8px">Observaciones abiertas · ${mi.nombre}</h3>${ab.length?`<div class="obs">${ab.map(({i,o})=>`<div><b style="font-size:13px">${esc(i.nombre)}</b>${obsItem(i.bp,o)}</div>`).join("")}</div>`:`<p class="empty">Nadie ha reportado diferencias todavía.</p>`}</div>
+      <div class="card"><div class="row between" style="margin-bottom:6px"><h3>Estado por instructor</h3></div>
+        <div class="chips" style="margin-bottom:6px">${filtros.map(([k,l,c])=>`<button class="chip" aria-pressed="${S.segFiltro===k}" data-segf="${k}">${l} <span class="num">${c}</span></button>`).join("")}</div>
+        <div class="status-list">${lista.map(({i,e})=>`<div class="status-row"><div><b>${esc(i.nombre)}</b><div class="hint mono">BP ${esc(i.bp)}</div></div><div class="row" style="gap:6px"><span class="pill ${e.cls}"><i></i>${e.txt}</span>${puede("inst")?`<button class="btn sm" data-verbp="${esc(i.bp)}">Ver rol</button>`:""}</div></div>`).join("")||`<p class="empty">Nadie en este estado.</p>`}</div></div>
+    </div></div>`;
+}
+/* ---------- Rol completo ---------- */
+function admMatriz(){
+  const P=rosterMes(S.mes); const mi=mesInfo(S.mes); const q=norm(S.busca.trim());
+  const pres=TODAS.filter(k=>P.some(i=>i.p.some(x=>x.k===k)));
+  if(S.filtro && !pres.includes(S.filtro)) S.filtro=null;
+  const rows=P.filter(i=>!q||norm(i.nombre).includes(q)||String(i.bp).includes(q));
+  const head=`<tr><th class="nm">Instructor</th>${Array.from({length:mi.dias},(_,k)=>{const d=k+1,w=dowOf(S.mes,d);return `<th style="${[0,6].includes(w)?"color:var(--muted)":""}"><span class="num">${d}</span><small>${DOWS[w]}</small></th>`}).join("")}</tr>`;
+  const body=rows.map(i=>{ const e=estadoInst(i.bp); return `<tr><td class="nm"><b>${esc(i.nombre)}</b><span class="mono">BP ${esc(i.bp)}</span> <span class="pill ${e.cls}" style="padding:0 7px;font-size:10.5px"><i></i>${e.txt}</span></td>
+    ${i.p.map((x,k)=>`<td class="c"><button class="cell k-${x.k} ${S.filtro===x.k?"hit":""}" ${drill(()=>abrirDia(i.bp,S.mes,k+1))} data-tip="${esc(`<b>${i.nombre} · ${k+1} ${mesCorto(S.mes)}</b><br>${x.titulo}${x.meta?"<br>"+x.meta.split("\n").slice(0,2).join("<br>"):""}`)}">${esc(x.code)}${["SIN","DO","VAC","FER","BLA"].includes(x.k)?"":`<small>${esc(x.k==="VIN"?"INS":x.k)}</small>`}${x.pernocta?`<i class="v"></i>`:""}</button></td>`).join("")}</tr>`; }).join("");
+  const cuenta=k=>rows.reduce((a,i)=>a+i.p.filter(x=>x.k===k).length,0);
+  return `<div class="stack"><div class="row between"><div class="chips"><span class="hint">Resaltar:</span>${pres.map(k=>`<button class="chip" aria-pressed="${S.filtro===k}" data-filtro="${k}">${sw(k)}${KC[k].corto} <span class="num">${cuenta(k)}</span></button>`).join("")}</div>
+    <input class="input" id="busca" placeholder="Buscar instructor o BP" value="${esc(S.busca)}" style="max-width:240px" autocomplete="off"></div>
+    ${rows.length?`<div class="mx-wrap"><table class="mx ${S.filtro?"filtering":""}"><thead>${head}</thead><tbody>${body}</tbody></table></div>`:`<p class="empty">Ningún instructor coincide con “${esc(S.busca)}”.</p>`}
+    <p class="hint">${rows.length} de ${P.length} instructores. Cada celda está clasificada; tócala para ver el detalle y el texto original.</p></div>`;
+}
+/* ---------- Equipo por día ---------- */
+function admDia(){
+  const P=rosterMes(S.mes); const mi=mesInfo(S.mes);
+  const esHoyMes=HOY.getFullYear()===mi.y&&HOY.getMonth()+1===mi.m;
+  if(!S.dia||S.dia>mi.dias) S.dia=esHoyMes?HOY.getDate():1; const d=S.dia;
+  const prog=P.filter(i=>i.p[d-1]&&WORK.includes(i.p[d-1].k)).length;
+  const grupos=["VIN","VHA","IET","RES","AUD","GES","BLA","DM","LIC","VAC","CUM","FER","SIN","DO"].map(k=>{ const gs=P.filter(i=>i.p[d-1]&&i.p[d-1].k===k); if(!gs.length) return "";
+    return `<div class="group"><div class="group-h">${sw(k)}<b>${KC[k].corto}</b> ${gs.length}</div><div class="group-box">${gs.map(i=>{const x=i.p[d-1]; return `<button class="person" ${drill(()=>abrirDia(i.bp,S.mes,d))}><b>${esc(i.nombre)}</b><span class="t">${esc(x.titulo)} ${x.pernocta?`<span class="viatico-tag">Viático</span>`:""}</span>${x.meta?`<span class="m">${esc(x.meta)}</span>`:""}</button>`}).join("")}</div></div>`; }).join("");
+  return `<div class="stack"><div class="days" role="tablist">${Array.from({length:mi.dias},(_,k)=>{const dd=k+1;return `<button class="daybtn" role="tab" aria-selected="${dd===d}" data-dsel="${dd}"><small>${DOWS[dowOf(S.mes,dd)]}</small><b class="num">${dd}</b></button>`}).join("")}</div>
+    <div><h2>${cap(DOW[dowOf(S.mes,d)])} ${d} de ${mi.nombre}${esHoyMes&&HOY.getDate()===d?" · hoy":""}</h2><p class="sub">${prog} de ${P.length} instructores con actividad.</p></div><div class="team">${grupos}</div></div>`;
+}
+/* ---------- Por instructor ---------- */
+function admInst(){
+  const P=Object.values(MO.personas).filter(pe=>MO.orden.some(m=>pe.meses[m])).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));
+  if(!P.length) return vacioRol();
+  if(!S.verBp||!MO.personas[S.verBp]) S.verBp=(P.find(pe=>pe.meses[S.mes])||P[0]).bp;
+  return `<div class="stack"><div class="field" style="max-width:380px"><label for="selVer">¿De quién es la información?</label><select class="input" id="selVer">${P.map(pe=>`<option value="${esc(pe.bp)}" ${pe.bp===S.verBp?"selected":""}>${esc(pe.nombre)}${!pe.meses[S.mes]?" (sin rol en "+mesInfo(S.mes).nombre+")":pe.perfil==="nd"?" (ausencia prolongada)":""}</option>`).join("")}</select></div>${vistaUsuario(S.verBp,true)}</div>`;
+}
+
+window.__archivos=(window.__archivos||{}); window.__archivos["Coordinacion"]="v2.3";
+</script>
