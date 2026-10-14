@@ -78,7 +78,6 @@ function vistaUsuario(bp, desdeAdmin){
   </div>
   ${mesF!==mes?`<p class="hint" style="margin-top:8px">${mesLargo(mes)} no tiene rol publicado: las cifras de vuelos y tierra son de ${mesLargo(mesF)}.</p>`:""}
 
-  ${vacResumenHTML(bp,desdeAdmin)}
   <div class="grid2" style="margin-top:16px">
     <div class="card stack" id="calRol">
       <div class="row between"><h2>${titulo}</h2>${enFreeze&&pv?`<span class="hint">Próximo vuelo: <b>${DOW[dowOf(mes,pv.d)]} ${pv.d}</b>, ${esc(pv.x.titulo)}</span>`:nota?`<span class="hint" style="max-width:46ch">${nota}</span>`:""}</div>
@@ -86,10 +85,10 @@ function vistaUsuario(bp, desdeAdmin){
       <div><div class="strip" aria-hidden="true">${C.strip.map(k=>`<span class="${stripCls(k)}"></span>`).join("")}</div><div class="strip-ax"><span>1 ${mesCorto(mes)}</span><span>15</span><span>${mi.dias} ${mesCorto(mes)}</span></div></div>
       ${C.sinF.length?`<div class="note">Hay ${plural(C.sinF[0].n,"día")} de vacaciones programados en ${mi.nombre} sin fecha exacta en la hoja.</div>`:""}
       <div class="cal">${["lun","mar","mié","jue","vie","sáb","dom"].map(d=>`<div class="dow">${d}</div>`).join("")}${C.tiles}</div>
-      ${enFreeze?codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
+      ${enFreeze?`<div class="row between">${toggleColSheetHTML()}</div>`+codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
       ${enFreeze?`<div style="border-top:1px solid var(--line);padding-top:12px"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sMc)}</div>`:""}
     </div>
-    <div class="stack rol-side">${enFreeze?conf+obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${vacHistHTML(bp)}</div>
+    <div class="stack rol-side">${enFreeze?conf+obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
   </div>
   <div class="u-grid" style="margin-top:16px">
     <div class="stack">
@@ -137,7 +136,7 @@ function colsChart(items, max, compact){
     ${it.total?`<span class="lab num" style="bottom:calc(${it.total/top*100}% + 2px);height:auto;background:none">${compact?it.total:""}</span>`:""}</div>`).join("");
   return `<div class="cols" style="${compact?"height:170px":""}"><div class="cols-y">${ticks.map(t=>`<span class="num" style="bottom:${t/top*100}%">${Math.round(t)}</span>`).join("")}</div>
     <div class="cols-plot">${ticks.slice(1).map(t=>`<div class="gridl" style="bottom:${t/top*100}%"></div>`).join("")}<div class="cols-bars">${bars}</div></div></div>
-    <div class="cols-x">${items.map(it=>`<span class="${it.sel?"sel":""}">${esc(it.lab)}</span>`).join("")}</div>`;
+    <div class="cols-x ${items.length>16?"muchos":""}">${items.map(it=>`<span class="${it.sel?"sel":""}">${esc(it.lab)}</span>`).join("")}</div>`;
 }
 function colsChartRaw(items,max){ // segmentos con color directo
   const top=Math.max(4,Math.ceil(max/4)*4); const ticks=[0,top/4,top/2,top*3/4,top];
@@ -222,17 +221,22 @@ function legendCount(max){ const g={}; for(let v=0;v<=max;v++){ const q=qCount(v
 function abrirDia(bp,mes,d){
   const pe=MO.personas[bp]; const x=pe&&pe.meses[mes]&&pe.meses[mes][d-1]; if(!x) return;
   const puedeObs=S.usuario.bp===bp && esEditable(mes);
+  const puedeInt=puedeProponerInt(bp,mes,d);
+  const intDia=intercambios().filter(z=>INT_ACTIVO.includes(z.estado) && z.mes===mes && z.dias.includes(d) && (z.solBp===bp||z.recBp===bp));
   const sc=document.createElement("div"); sc.className="scrim center";
   sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shT" style="--cat:${["DO","SIN"].includes(x.k)?"var(--line-2)":KC[x.k].color}">
     <span class="hint">${esc(pe.nombre)}, ${DOW[dowOf(mes,d)]} ${d} de ${mesInfo(mes).nombre} ${mesInfo(mes).y}</span><h2 id="shT">${esc(x.titulo)}</h2>
     <span class="chipk" style="align-self:flex-start">${sw(x.k)}${esc(KC[x.k].nom)}${x.sub?` · ${esc(x.sub)}`:""}</span>
     ${x.meta?`<div class="meta">${esc(x.meta)}</div>`:""}${x.pernocta?`<span class="row" style="gap:8px"><i class="dot-v"></i>Este vuelo genera viático</span>`:""}
+    ${intDia.map(z=>`<div class="note">⇄ Intercambio en curso con ${esc(z.solBp===bp?z.recNombre:z.solNombre)}: ${esc(estadoIntVista(z,bp)[1])}</div>`).join("")}
+    ${puedeInt&&!intDia.some(z=>z.estado==="en_supervisor"||(z.estado==="pendiente"&&z.solBp===bp))?`<button class="btn" type="button" id="btnInt">⇄ ${intDia.length?"Proponer otro intercambio para este día":"Proponer intercambio de este día"}</button>`:""}
     ${x.raw?`<details><summary class="hint" style="cursor:pointer">Texto original del rol</summary><div class="meta" style="margin-top:6px">${esc(x.raw)}</div></details>`:""}
     ${puedeObs?`<form id="fObs" class="stack" style="gap:8px"><label class="hint" for="obsTxt">¿Algo no calza en este día? Cuéntale a coordinación.</label><textarea class="input" id="obsTxt" maxlength="1500"></textarea>
       <div class="row"><button class="btn" type="submit" id="obsBtn">Enviar observación</button><button class="btn primary" type="button" id="cerrar" style="flex:1">Cerrar</button></div></form>`:`<button class="btn primary" id="cerrar">Cerrar</button>`}</div>`;
   document.body.appendChild(sc);
   const close=()=>{ sc.remove(); document.removeEventListener("keydown",k); }; const k=e=>{ if(e.key==="Escape") close(); };
   document.addEventListener("keydown",k); sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#cerrar",sc).onclick=close;
+  const bi=$("#btnInt",sc); if(bi) bi.onclick=()=>{ close(); abrirIntercambio(mes,d); };
   const f=$("#fObs",sc); if(f) f.onsubmit=async e=>{ e.preventDefault(); const t=$("#obsTxt",sc).value.trim(); if(!t) return;
     const b=$("#obsBtn",sc); setCargando(b,true,"Enviando…");
     try{ const r=await api("apiObservacion",S.token,mes,d,t); S.resp[mes+"_"+bp]=r; close(); render(); toast("Observación enviada a coordinación"); }

@@ -3,6 +3,7 @@
  * 1) instalar()                          — una sola vez, después de pegar el código.
  * 2) generarCodigosAdministradores()     — si coordinación necesita un código nuevo para entrar.
  * 3) sincronizarAhora()                  — lee todos los Google Sheets de la hoja Fuentes.
+ * 3b) registrarFuentes()                 — agrega a Fuentes los meses nuevos de CONFIG.fuentesIniciales y los lee.
  * 4) autorizarPermisos()                 — vuelve a pedir los permisos que falten (correo, disparadores, otros archivos).
  */
 
@@ -29,18 +30,13 @@ function instalar() {
     ['Equipo por día', 'NO', 'SI', 'Quiénes tienen actividad cada día.'],
     ['Actualizar rol', 'NO', 'SI', 'Google Sheets mensuales conectados y carga de Excel. Nunca disponible para instructores.'],
     ['Usuarios y accesos', 'NO', 'SI', 'Códigos de acceso, sesiones e ingresos. Nunca disponible para instructores.'],
-    ['Vacaciones', 'NO', 'SI', 'Ventana de solicitudes, aprobación y saldo del equipo por periodo DGAC. Cada instructor ve sus propias vacaciones en Mi rol.']
+    ['Vacaciones', 'NO', 'SI', 'Ventana de solicitudes, aprobación y saldo del equipo por periodo DGAC. Cada instructor ve sus propias vacaciones en Mi rol.'],
+    ['Tipos y colores', 'NO', 'SI', 'Catálogo de tipos de actividad y sus colores; repintar el Google Sheet de un mes. Nunca disponible para instructores.'],
+    ['Intercambios', 'NO', 'SI', 'Aprobar o rechazar los intercambios de actividades que acordaron dos instructores. Cada instructor propone y responde los suyos en Mi rol.']
   ].forEach(f => { if (filasPer.indexOf(normTxt_(f[0])) < 0) { per.appendRow(f); log.push('Permisos: se agregó "' + f[0] + '".'); } });
 
   // Fuentes (Google Sheets mensuales)
-  const fu = hoja_(CONFIG.hojas.fuentes, ENC_FUENTES_);
-  fu.getRange('A:A').setNumberFormat('@');
-  const existentes = leerFuentes_();
-  CONFIG.fuentesIniciales.forEach(f => {
-    if (existentes.some(x => x.mes === f.mes)) return;
-    escribirFuente_({}, { mes: f.mes, enlace: f.enlace, hoja: f.hoja || '', activo: true, ultima: '', estado: 'Pendiente de sincronizar', instructores: 0, archivo: '' });
-    log.push('Fuentes: se registró ' + f.mes + '.');
-  });
+  registrarFuentesIniciales_(log);
 
   // Solicitudes y Vigencias (datos que antes venían incrustados en la página)
   const so = hoja_(CONFIG.hojas.solicitudes, ENC_SOLICITUDES_);
@@ -59,6 +55,12 @@ function instalar() {
   // Vacaciones por periodo DGAC
   instalarVacaciones_(log);
 
+  // Intercambios de actividades y catálogo de colores
+  hojaInt_();
+  hojaTipos_();
+  hojaPerfiles_();
+  asegurarColumnas_(hoja_(CONFIG.hojas.usuarios), ['Perfil']);
+
   // Instrucciones
   const ins = ss.getSheetByName('Instrucciones');
   if (ins) {
@@ -67,8 +69,13 @@ function instalar() {
       ['Fuentes', 'Un Google Sheet por mes (hoja ROL INS). Se agregan desde la app (Actualizar rol › Conectar Google Sheet) o escribiendo Mes (aaaa-mm) y el enlace. Activo = NO pausa la lectura.'],
       ['Solicitudes', 'Pedidos de jefatura e instructores: BP, Nombre, Desde, Hasta, Tipo y Estado (asignado / no se asignó).'],
       ['Vigencias', 'Experiencia reciente por BP (hoja BG INS). Escribe VENCIDO en la columna programada para generar una alerta.'],
-      ['Vacaciones', 'Una fila por instructor: fechas DGAC (inicio de su periodo), derecho 2025-26 y 2026-27 y "Programado por mes 2026" (mes:días, p. ej. 11:15; 12:7) para días sin fecha exacta.'],
+      ['Vacaciones', 'Una fila por instructor: BP, nombre y fechas DGAC (inicio de su periodo de vacaciones).'],
+      ['VacacionesPeriodos', 'Una fila por instructor y periodo DGAC: BP, Periodo (p. ej. 2027-28), Derecho y Tomados (referencia). Para un periodo nuevo agrega una fila; si falta, la app estima +1 día por renovación (máximo 45).'],
+      ['VacacionesProgramado', 'Días programados por mes sin fecha exacta: BP, Mes (aaaa-mm) y Días. Solo cuentan los meses de CONFIG.vacSinFecha.'],
       ['VacacionesDias / VacacionesBloques', 'Días de vacaciones con fecha (uno por fila) y bloques programados (desde-hasta). Las solicitudes aprobadas en la app se suman solas.'],
+      ['Perfiles', 'Perfiles de acceso de coordinación: por sección, Sin acceso, Ver o Gestionar. Se asignan en la columna Perfil de Usuarios (vacío = Coordinación completa). Se editan desde la app en Usuarios y accesos. La hoja Permisos aplica solo a instructores.'],
+      ['TiposActividad', 'Catálogo de colores: Tipo, Palabras clave (separadas por ;), Color fondo y Color texto (#rrggbb). Se edita desde la app en Tipos y colores. El orden importa: lo más específico arriba.'],
+      ['Intercambios', 'Lo llena la app: propuestas de intercambio de actividades entre instructores, respuesta del receptor y decisión de coordinación. Al aprobar, la app intercambia las celdas en el Google Sheet del mes.'],
       ['SolicitudesVacaciones', 'Lo llena la app cuando un instructor pide días. Coordinación aprueba o rechaza en la pestaña Vacaciones.'],
       ['Acceso a la app', 'Usuario = BP o correo corporativo. La primera vez, coordinación genera un código temporal (Usuarios y accesos) y la persona crea su contraseña. Las contraseñas no se guardan en este archivo.']
     ].forEach(f => { if (ya.indexOf(normTxt_(f[0])) < 0) ins.appendRow(f); });
@@ -102,6 +109,30 @@ function generarCodigosAdministradores() {
   Logger.log(out.join('\n') || 'No hay administradores activos en la hoja Usuarios.');
 }
 
+/** Agrega a la hoja Fuentes los meses de CONFIG.fuentesIniciales que aún no estén. Devuelve los meses agregados. */
+function registrarFuentesIniciales_(log) {
+  const fu = hoja_(CONFIG.hojas.fuentes, ENC_FUENTES_);
+  fu.getRange('A:A').setNumberFormat('@');
+  const existentes = leerFuentes_();
+  const nuevos = [];
+  CONFIG.fuentesIniciales.forEach(f => {
+    if (existentes.some(x => x.mes === f.mes)) return;
+    escribirFuente_({}, { mes: f.mes, enlace: f.enlace, hoja: f.hoja || '', activo: true, ultima: '', estado: 'Pendiente de sincronizar', instructores: 0, archivo: '' });
+    log.push('Fuentes: se registró ' + f.mes + '.');
+    nuevos.push(f.mes);
+  });
+  return nuevos;
+}
+
+/** Registra los Google Sheets mensuales de CONFIG.fuentesIniciales y los lee. No toca los meses que ya estaban en Fuentes. */
+function registrarFuentes() {
+  soloEditor_();
+  const log = [];
+  const nuevos = registrarFuentesIniciales_(log);
+  nuevos.forEach(mes => sincronizarTodo_(mes).forEach(r => log.push('Sincronización ' + (r.mes || mes) + ': ' + (r.ok ? r.instructores + ' instructores' + (r.avisos.length ? ' · ' + r.avisos.join(' ') : '') : r.error))));
+  Logger.log(log.join('\n') || 'Todos los meses de CONFIG.fuentesIniciales ya estaban en la hoja Fuentes.');
+}
+
 function sincronizarAhora() {
   soloEditor_();
   sincronizarTodo_().forEach(r => Logger.log((r.mes || '?') + ': ' + (r.ok ? 'OK, ' + r.instructores + ' instructores' + (r.avisos.length ? ' · ' + r.avisos.join(' ') : '') : r.error)));
@@ -114,6 +145,10 @@ function autorizarPermisos() {
   log.push('Correo: ' + MailApp.getRemainingDailyQuota() + ' envíos disponibles hoy');
   log.push('Disparadores: ' + ScriptApp.getProjectTriggers().length);
   log.push('Google Sheet base: ' + ss_().getName());
+  try {
+    People.People.searchDirectoryPeople({ query: Session.getEffectiveUser().getEmail(), readMask: 'names', sources: ['DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE'] });
+    log.push('Directorio corporativo (People API): OK');
+  } catch (e) { log.push('Directorio corporativo (People API): SIN ACCESO (' + e.message + ')'); }
   leerFuentes_().forEach(f => { try { log.push('Fuente ' + f.mes + ': ' + SpreadsheetApp.openById(f.id).getName()); } catch (e) { log.push('Fuente ' + f.mes + ': SIN ACCESO (' + e.message + ')'); } });
   Logger.log(log.join('\n'));
 }

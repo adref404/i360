@@ -17,22 +17,30 @@ function vacPersona(bp){
   const fechas = new Map();
   v.dias.forEach(d=>fechas.set(d,"registro"));
   v.bloques.forEach(b=>{ for(let d=parseISO(b.desde); d<=parseISO(b.hasta); d.setDate(d.getDate()+1)) if(!fechas.has(isoD(d))) fechas.set(isoD(d),"bloque"); });
-  /* Noviembre y diciembre 2026: días de la hoja Vacaciones que no tienen fecha exacta */
-  const m26=v.mensual2026||{};
-  const sinFecha=[]; const sumM=(m26["11"]||0)+(m26["12"]||0);
-  let dated=0; for(const k of fechas.keys()) if(k>="2026-11-01"&&k<="2026-12-31") dated++;
-  let rest=Math.max(0,sumM-dated);
-  ["11","12"].forEach(m=>{ const dm=[...fechas.keys()].filter(k=>k.startsWith("2026-"+m)).length; const n=Math.min(rest,Math.max(0,(m26[m]||0)-dm)); if(n>0){ sinFecha.push({mes:"2026-"+m,n}); rest-=n; } });
+  /* Días de VacacionesProgramado sin fecha exacta, en los meses de CONFIG.vacSinFecha (igual que en el servidor) */
+  const rango=VAC().mesesSinFecha||{}, prog=v.programado||{}, meses=[];
+  if(/^\d{4}-\d{2}$/.test(rango.desde||"") && /^\d{4}-\d{2}$/.test(rango.hasta||"")){
+    let [y,m]=rango.desde.split("-").map(Number);
+    while(`${y}-${String(m).padStart(2,"0")}`<=rango.hasta && meses.length<120){ meses.push(`${y}-${String(m).padStart(2,"0")}`); if(++m>12){ m=1; y++; } }
+  }
+  const enRango=[...fechas.keys()].filter(k=>meses.includes(k.slice(0,7)));
+  const sinFecha=[]; let rest=Math.max(0, meses.reduce((s,m)=>s+(prog[m]||0),0)-enRango.length);
+  meses.forEach(m=>{ const dm=enRango.filter(k=>k.startsWith(m)).length; const n=Math.min(rest,Math.max(0,(prog[m]||0)-dm)); if(n>0){ sinFecha.push({mes:m,n}); rest-=n; } });
   const r = {...v, bp, mm, dd, fechas, sinFecha, fechaBase: base, sinDgacPropia: !v.dgac25};
   VCACHE[bp]=r; return r;
 }
 const inicioPer = (vp,Y) => new Date(Y, vp.mm-1, vp.dd);
 const finPer = (vp,Y) => new Date(Y+1, vp.mm-1, vp.dd-1);
+/* Derecho del periodo que empieza en Y. Sin dato en la hoja: +1 día por renovación (mínimo 30, máximo 45). */
+const derechoDeHoja = (vp,Y) => (vp.derechos||{})[Y]!=null;
 function derechoPer(vp,Y){
-  if(Y===2025) return vp.meta2526;
-  if(Y===2026) return vp.meta2627;
-  if(Y<2025) return Math.max(30, vp.meta2526-(2025-Y));
-  return Math.min(45, vp.meta2627+(Y-2026));
+  const d=vp.derechos||{};
+  if(d[Y]!=null) return d[Y];
+  const ys=Object.keys(d).map(Number).sort((a,b)=>a-b);
+  if(!ys.length) return null;
+  if(Y<ys[0]) return Math.max(30, d[ys[0]]-(ys[0]-Y));
+  const prev=ys.filter(y=>y<Y).pop();
+  return Math.min(45, d[prev]+(Y-prev));
 }
 const anioVig = (vp,hoy) => hoy>=inicioPer(vp,hoy.getFullYear()) ? hoy.getFullYear() : hoy.getFullYear()-1;
 const anioDeFecha = (vp,f) => f>=inicioPer(vp,f.getFullYear()) ? f.getFullYear() : f.getFullYear()-1;
@@ -48,7 +56,7 @@ function periodoVac(vp, Y, hoy, extra){
   let sinF=0; vp.sinFecha.forEach(s=>{ const mid=s.mes+"-15"; if(mid>=a && mid<=b){ prog+=s.n; sinF+=s.n; } });
   const der=derechoPer(vp,Y);
   const total=(fin-ini)/864e5+1, trans=Math.max(0,Math.min(total,(hoy-ini)/864e5+1));
-  return {Y, etiqueta:etiquetaPer(Y), ini, fin, der, tom, prog, sol, sinF, pend:der-tom-prog, estimado:(Y<2025||Y>2026),
+  return {Y, etiqueta:etiquetaPer(Y), ini, fin, der, tom, prog, sol, sinF, pend:der-tom-prog, estimado:!derechoDeHoja(vp,Y),
     dTom:dTom.sort(), dProg:dProg.sort(), dSol:dSol.sort(), avance: trans/total, diasRenov: Math.ceil((fin-hoy)/864e5)+1};
 }
 function rangosISO(list){
@@ -75,6 +83,22 @@ const ESTADO_SOL = {pendiente:["warn","Por aprobar"], aprobada:["good","Aprobada
 const pillSol = s => { const e=ESTADO_SOL[s.estado]||["",cap(s.estado||"")]; return `<span class="pill ${e[0]}"><i></i>${e[1]}</span>`; };
 const rangoTxt = dias => rangosISO(dias||[]).map(x=>`${fmtC(x.desde)}${x.n>1?"–"+fmtC(x.hasta):""}`).join(" · ");
 
+/* Comentarios de la solicitud y respuesta del instructor. modo: "inst" (el dueño), "admin" (coordinación) o "ver" (solo lectura) */
+const decidida = s => s.estado==="aprobada" || s.estado==="rechazada";
+const revisionPendiente = s => s.respuesta==="revision" && !s.revAtendidaAt;
+const esperaEnterado = s => decidida(s) && !s.respuesta;
+function conversacionSol(s, modo){
+  const yo=modo==="inst"; const out=[];
+  if(s.comInst) out.push(`<div class="cmt"><b>${yo?"Tu comentario":"Comentario del instructor"}:</b> ${esc(s.comInst)}</div>`);
+  if(s.comCoord) out.push(`<div class="cmt coord"><b>Coordinación:</b> ${esc(s.comCoord)}</div>`);
+  if(s.motivoRev) out.push(`<div class="cmt rev"><b>${yo?"Pediste revisión":"Pidió revisión"}:</b> ${esc(s.motivoRev)}${s.revAtendidaAt?` <span class="hint">· atendida ${fechaCorta(s.revAtendidaAt)}</span>`:` <span class="hint">· ${yo?"esperando a coordinación":"por atender"}</span>`}</div>`);
+  if(s.respuesta==="enterado") out.push(`<span class="m">✓ ${yo?"Marcaste enterado":"El instructor marcó enterado"}${s.respondidaAt?" · "+fechaCorta(s.respondidaAt):""}</span>`);
+  else if(decidida(s) && !s.respuesta && !yo) out.push(`<span class="m">${s.revAtendidaAt?"Esperando que el instructor vea la revisión":"Esperando que el instructor vea la decisión"}</span>`);
+  if(yo && esperaEnterado(s)) out.push(`<div class="row" style="gap:6px;margin-top:6px"><button class="btn sm primary" data-enterado="${esc(s.id)}">Enterado</button>${s.revAtendidaAt?"":`<button class="btn sm" data-revision="${esc(s.id)}">Pedir revisión</button>`}</div>`);
+  if(modo==="admin" && revisionPendiente(s)) out.push(`<div class="row" style="margin-top:6px"><button class="btn sm primary" data-atender="${esc(s.id)}">Atender revisión</button></div>`);
+  return out.join("");
+}
+
 /* Barra de uso del periodo: tomados | programados | solicitados | libres */
 function vbar(p, alto){
   const tot=Math.max(p.der, p.tom+p.prog+p.sol);
@@ -84,36 +108,6 @@ function vbar(p, alto){
   return `<div class="vbar ${alto?"lg":""}" role="img" aria-label="${p.tom} tomados, ${p.prog} programados, ${libres} por programar de ${p.der}">
     ${seg(p.tom,"vt",`<b>Tomados</b>: ${p.tom} días`)}${seg(p.prog,"vp",`<b>Programados</b>: ${p.prog} días`)}${seg(p.sol,"vs",`<b>Solicitados</b>: ${p.sol} días`)}${seg(libres,"vl",`<b>Por programar</b>: ${libres} días`)}
     ${exceso?`<i class="vmark" style="left:${p.der/tot*100}%" data-tip="${esc(`Derecho del periodo: ${p.der} días`)}"></i>`:""}</div>`;
-}
-
-/* ============ Resumen del periodo vigente (sobre el calendario) ============ */
-function vacResumenHTML(bp, desdeAdmin){
-  const vp=vacPersona(bp);
-  if(!vp) return `<div class="card vsum"><div class="row" style="gap:10px"><span class="pill">Vacaciones</span><span class="hint">No hay información de vacaciones para este BP en la hoja Vacaciones.</span></div></div>`;
-  const ex=extraDe(bp); const Y=anioVig(vp,HOY); const p=periodoVac(vp,Y,HOY,ex); const nx=periodoVac(vp,Y+1,HOY,ex);
-  const porTomar=p.der-p.tom, libres=p.der-p.tom-p.prog-p.sol;
-  const c=cfgVac(); const ab=ventanaAbierta(); const propio=esPropio(bp,desdeAdmin); const vu=VAC().ventanaUltima;
-  const ventana = ab
-    ? `<div class="vwin open"><span class="pill good"><i></i>Solicitud habilitada</span><p>${c.hasta?`Hasta el ${fmtL(parseISO(c.hasta))}`:"Abierta"} · días de ${mesLargo(c.mesDesde)} a ${mesLargo(c.mesHasta)}</p>${propio?`<button class="btn primary sm" data-irsol="1">Elegir mis días</button>`:""}</div>`
-    : `<div class="vwin"><span class="pill"><i></i>Solicitud no habilitada</span><p>${propio?"Puedes revisar los meses futuros. Coordinación avisará cuando abra la próxima ventana":"La ventana de solicitud está cerrada"}${vu?` (la última fue del ${fmtC(parseISO(vu.desde))} al ${fmtC(parseISO(vu.hasta))})`:""}.</p></div>`;
-  return `<div class="card vsum">
-    <div class="vsum-top">
-      <div class="vsum-per"><span class="eyebrow">${propio?"Tus vacaciones":"Vacaciones"} · periodo vigente</span>
-        <div class="row" style="gap:10px;align-items:baseline"><h2>Periodo ${p.etiqueta}</h2><span class="hint">${fmtL(p.ini)} → ${fmtL(p.fin)}</span></div>
-        <div class="vtime" aria-label="Avance del periodo"><span style="width:${p.avance*100}%"></span><i style="left:${p.avance*100}%"></i></div>
-        <div class="row between hint" style="margin-top:4px"><span>Inicio</span><span><b style="color:var(--ink)">Se renueva el ${fmtC(new Date(p.fin.getTime()+864e5))}</b> · en ${plural(p.diasRenov,"día")}</span></div>
-      </div>
-      ${ventana}
-    </div>
-    <div class="vstats">
-      <div class="vst"><span class="l">Días disponibles</span><b class="num">${p.der}</b><span class="s">Derecho del periodo</span></div>
-      <div class="vst"><span class="l"><i class="sw" style="background:var(--c-vac)"></i>Días tomados</span><b class="num">${p.tom}</b><span class="s">${pct(p.der?p.tom/p.der:0)} del periodo</span></div>
-      <div class="vst"><span class="l"><i class="sw vp-sw"></i>Programados</span><b class="num">${p.prog+p.sol}</b><span class="s">${p.sol?`${p.sol} solicitados por aprobar`:p.sinF?`${p.sinF} sin fecha exacta`:"aún por tomar"}</span></div>
-      <div class="vst ${libres<0?"neg":""}"><span class="l">Días pendientes</span><b class="num">${libres<0?0:libres}</b><span class="s">${libres<0?`Excede en ${-libres} días el derecho`:`por programar · ${porTomar} por tomar`}</span></div>
-    </div>
-    ${vbar({...p},true)}
-    <div class="row between hint" style="margin-top:6px"><span>0</span><span>Siguiente periodo ${nx.etiqueta}: <b style="color:var(--ink)">${nx.der} días</b>${nx.der>p.der?` (+${nx.der-p.der})`:nx.der>=45?" (tope de 45)":""}${nx.prog+nx.sol?` · ${nx.prog+nx.sol} ya programados`:""}</span><span>${p.der}</span></div>
-  </div>`;
 }
 
 /* ============ Calendario del mes con capa de vacaciones y selección ============ */
@@ -127,7 +121,7 @@ function calHTML(bp, mes, desdeAdmin){
   for(let d=1; d<=mi.dias; d++){
     const k=isoD(new Date(mi.y,mi.m-1,d)); const hoyC=k===h?"today":"";
     if(p){ const x=p[d-1]; strip.push(x.k);
-      tiles.push(`<button class="tile k-${x.k} ${hoyC} ${obsDias.has(d)?"has-obs":""}" ${drill(()=>abrirDia(bp,mes,d))} aria-label="${d}: ${esc(x.titulo)}"><span class="d num">${d}</span><span class="c"><span>${esc(x.code)}</span><small>${["SIN","DO","VAC","FER"].includes(x.k)?"":esc(x.k==="VIN"?"INS":x.k)}</small></span>${x.pernocta?`<i class="v"></i>`:""}</button>`);
+      tiles.push(`<button class="tile k-${x.k} ${hoyC} ${obsDias.has(d)?"has-obs":""}" ${estiloSheet(x)} ${drill(()=>abrirDia(bp,mes,d))} aria-label="${d}: ${esc(x.titulo)}"><span class="d num">${d}</span><span class="c"><span>${esc(x.code)}</span><small>${["SIN","DO","VAC","FER"].includes(x.k)?"":esc(x.k==="VIN"?"INS":x.k)}</small></span>${x.pernocta?`<i class="v"></i>`:""}</button>`);
     } else {
       const st=estadoVac(vp,k,ex); const isSel=S.selVac.has(k);
       let cls="k-NO", code="", sm="";
@@ -158,13 +152,15 @@ function selPanelHTML(bp){
       <div class="vbar"><span class="vt" style="flex:${p.tom}"></span><span class="vp" style="flex:${p.prog+p.sol}"></span><span class="vn ${q<0?"bad":""}" style="flex:${n}"></span><span class="vl" style="flex:${Math.max(0,q)}"></span></div></div>`; }).join("");
   return `<div class="selpanel ${ok?"":"err"}"><div class="row between"><div><span class="eyebrow">Tu solicitud</span><div class="selnum"><b class="num">${sel.length}</b> ${sel.length===1?"día":"días"}</div><span class="hint">${esc(rangoTxt(sel))}</span></div>
     <div class="row"><button class="btn sm" data-selclear="1">Limpiar</button><button class="btn primary" data-selsend="1" ${ok?"":"disabled"}>Enviar solicitud</button></div></div>
-    ${filas}${ok?"":`<p class="err" style="margin:0">Estás pidiendo más días de los que te quedan en ese periodo. Quita días para poder enviar.</p>`}</div>`;
+    ${filas}${ok?"":`<p class="err" style="margin:0">Estás pidiendo más días de los que te quedan en ese periodo. Quita días para poder enviar.</p>`}
+    <div class="field"><label for="selCom">Comentario para coordinación <span class="hint">(opcional)</span></label><textarea class="input" id="selCom" maxlength="500" rows="2" placeholder="Ej.: viaje familiar ya pagado, puedo mover un día si hace falta.">${esc(S.selCom||"")}</textarea></div></div>`;
 }
 function solicitudCardHTML(bp, mes, desdeAdmin, selActiva){
   const vp=vacPersona(bp); if(!vp) return "";
   const c=cfgVac(), ab=ventanaAbierta(), propio=esPropio(bp,desdeAdmin);
   const l=solicitudesDe(bp);
-  const lista=l.length?`<div class="fl">${l.map(s=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${plural(s.n||(s.dias||[]).length,"día")}</span><br><span class="m">${esc(rangoTxt(s.dias))}</span>${s.decididoPor&&s.estado!=="pendiente"?`<br><span class="m">${esc(ESTADO_SOL[s.estado]?ESTADO_SOL[s.estado][1]:s.estado)} por ${esc(s.decididoPor)} · ${fechaCorta(s.decididoAt)}</span>`:""}</span><span class="row" style="gap:6px">${pillSol(s)}${propio&&s.estado==="pendiente"?`<button class="btn sm" data-cancelsol="${esc(s.id)}">Cancelar</button>`:""}</span></div>`).join("")}</div>`:"";
+  const lista=l.length?`<div class="fl">${l.map(s=>`<div class="fl-i solv" id="misol-${esc(s.id)}" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${plural(s.n||(s.dias||[]).length,"día")}</span><br><span class="m">${esc(rangoTxt(s.dias))}</span>${s.decididoPor&&s.estado!=="pendiente"?`<br><span class="m">${esc(ESTADO_SOL[s.estado]?ESTADO_SOL[s.estado][1]:s.estado)} por ${esc(s.decididoPor)} · ${fechaCorta(s.decididoAt)}</span>`:""}
+      ${conversacionSol(s, propio?"inst":"ver")}</span><span class="row" style="gap:6px">${pillSol(s)}${propio&&s.estado==="pendiente"?`<button class="btn sm" data-cancelsol="${esc(s.id)}">Cancelar</button>`:""}</span></div>`).join("")}</div>`:"";
   let cuerpo;
   if(!ab) cuerpo=`<p class="hint">La solicitud no está habilitada.${propio?" Puedes avanzar a los meses siguientes para revisar tus vacaciones, pero aún no puedes elegir días.":""}</p>`;
   else if(!propio) cuerpo=`<p class="hint">Ventana abierta hasta ${c.hasta?fmtL(parseISO(c.hasta)):"nuevo aviso"} para días de ${mesLargo(c.mesDesde)} a ${mesLargo(c.mesHasta)}.</p>`;
@@ -187,7 +183,7 @@ function vacHistHTML(bp){
       ${p.sinF?`<p class="hint" style="padding-top:6px">${p.sinF} días programados en ${vp.sinFecha.map(s=>mesInfo(s.mes).nombre).join(" y ")} sin fecha exacta en la hoja.</p>`:""}</div></details>`; }).join("");
   return `<div class="card"><div class="chart-title"><div><h3>Historial de vacaciones</h3><p>Por periodo DGAC, desde 2024. Toca un periodo para ver las fechas.</p></div>
     <div class="legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw" style="box-shadow:inset 0 0 0 1px var(--line-2)"></i>Por programar</span></div></div>${rows}
-    ${ys.some(Y=>Y<2025)?`<p class="hint" style="margin-top:8px">* Derecho estimado con la regla de +1 día por renovación; la hoja solo trae el derecho de 2025-26 y 2026-27.</p>`:""}</div>`;
+    ${ys.some(Y=>!derechoDeHoja(vp,Y))?`<p class="hint" style="margin-top:8px">* Derecho estimado con la regla de +1 día por renovación; la hoja VacacionesPeriodos no trae el derecho de ese periodo.</p>`:""}</div>`;
 }
 
 /* ============ Equipo: saldo del periodo vigente ============ */
@@ -209,18 +205,268 @@ function vacEquipoHTML(titulo){
     ${sin.length?`<p class="hint" style="margin-top:8px">Sin datos en la hoja Vacaciones: ${sin.map(r=>esc(r.pe.nombre)).join(", ")}.</p>`:""}</div>`;
 }
 
+/* ============ Tablero de vacaciones (coordinación) ============
+   Cuatro preguntas: quién vence (M-2), cuándo se concentran, dónde hay exceso sobre el cupo y quién tiene prioridad.
+   Las solicitudes de ejemplo (S.vacSim) viven solo en este navegador: no se envían al servidor ni se mezclan con las reales. */
+const MESES_CV = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+const cupoVac = () => Math.max(1, Number(cfgVac().cupo)||3);
+const nombreVacDe = bp => (MO.personas[bp]||{}).nombre || bp;
+const cortoNom = n => { const p=String(n).split(" "); return p[0]+(p[1]?" "+p[1][0]+".":""); };
+const rosterVac = () => vacEquipo().filter(r=>r.vp).map(r=>r.pe);
+const solsDash = () => (VAC().solicitudes||[]).filter(s=>s.estado!=="cancelada").concat(S.vacSim||[]);
+function extraDash(bp){ const aprob=new Set(), pend=new Set(); solsDash().filter(s=>s.bp===bp).forEach(s=>(s.dias||[]).forEach(k=>{ if(s.estado==="aprobada") aprob.add(k); else if(s.estado==="pendiente") pend.add(k); })); return {aprob,pend}; }
+const irInstructorVac = bp => { if(!puede("inst")) return; S.verBp=bp; S.tab="inst"; S.mes=mesHoy(); render(); scrollTo(0,0); };
+
+/* ---------- Escalafón y trimestre ---------- */
+function escalafon(){
+  const ov=VAC().escalafon||{};
+  const rows=rosterVac().map(pe=>{ const vp=vacPersona(pe.bp); const o=ov[pe.bp]||{}; const f=vp.dgacOrig?parseISO(vp.dgacOrig):null;
+    return {bp:pe.bp, nombre:pe.nombre, fecha:f, anio:o.anio||(f?f.getFullYear():null), trim:o.trim||(f?Math.floor(f.getMonth()/3)+1:null), manual:!!(o.anio||o.trim)}; });
+  rows.sort((a,b)=>{ if(!a.anio!==!b.anio) return a.anio?-1:1; if(a.anio!==b.anio) return a.anio-b.anio; if(a.trim!==b.trim) return a.trim-b.trim; return (a.fecha||0)-(b.fecha||0); });
+  rows.forEach((r,i)=>r.n=i+1);
+  const map={}; rows.forEach(r=>map[r.bp]=r); return {rows,map};
+}
+function motivoPrioridad(a,b){ // por qué a va antes que b
+  if(!b.anio) return `${cortoNom(b.nombre)} no tiene escalafón registrado`;
+  if(a.anio!==b.anio) return `escalafón ${a.anio} frente a ${b.anio}`;
+  if(a.trim!==b.trim) return `mismo escalafón (${a.anio}), trimestre T${a.trim} frente a T${b.trim}`;
+  return `mismo escalafón y trimestre; desempata la fecha DGAC`;
+}
+
+/* ---------- Mapa diario: quién está de vacaciones cada día ---------- */
+function mapaDias(){
+  const h=isoD(HOY); const M={};
+  const add=(k,bp,t)=>{ (M[k]=M[k]||{tom:new Set(),prog:new Set(),sol:new Set()})[t].add(bp); };
+  rosterVac().forEach(pe=>{ const vp=vacPersona(pe.bp); const ex=extraDash(pe.bp);
+    for(const k of vp.fechas.keys()) add(k,pe.bp,k<=h?"tom":"prog");
+    ex.aprob.forEach(k=>{ if(!vp.fechas.has(k)) add(k,pe.bp,k<=h?"tom":"prog"); });
+    ex.pend.forEach(k=>{ if(!vp.fechas.has(k)) add(k,pe.bp,"sol"); }); });
+  return M;
+}
+const ocup = c => c ? c.tom.size+c.prog.size : 0;
+function qCupo(n,cupo){ if(!n) return ""; const r=n/cupo; return r<=0.34?"q1":r<=0.67?"q2":r<=1?"q3":r<=1.5?"q4":"q5"; }
+
+/* ---------- Ventanas de días donde lo pedido supera el cupo ---------- */
+function conflictos(M, cupo){
+  const c=cfgVac(); const dias=Object.keys(M).filter(k=>M[k].sol.size && k.slice(0,7)>=c.mesDesde && k.slice(0,7)<=c.mesHasta && ocup(M[k])+M[k].sol.size>cupo).sort();
+  const out=[]; let cur=null;
+  dias.forEach(k=>{ const f=parseISO(k); if(cur && Math.round((f-cur.hasta)/864e5)===1){ cur.hasta=f; cur.dias.push(k); } else { cur={desde:f,hasta:f,dias:[k]}; out.push(cur); } });
+  out.forEach(w=>{ const sol=new Set(), maxOc=Math.max(...w.dias.map(k=>ocup(M[k]))); w.dias.forEach(k=>M[k].sol.forEach(b=>sol.add(b)));
+    w.solicitantes=[...sol]; w.libres=Math.max(0,cupo-maxOc); w.maxDem=Math.max(...w.dias.map(k=>ocup(M[k])+M[k].sol.size)); });
+  return out;
+}
+
+/* ---------- Solicitudes de ejemplo (solo para ver cómo se comporta el tablero) ---------- */
+function simularCiclo(){
+  const c=cfgVac(); const y=Number(c.mesDesde.slice(0,4));
+  const base=[[0,4,14],[0,4,10],[0,6,8],[0,11,10],[0,18,8],[1,1,15],[1,8,7],[6,1,15],[6,1,10],[6,6,10],[6,13,8],[11,14,11],[11,17,10],[11,20,10],[11,21,8],[2,9,7],[3,13,8],[4,4,15],[7,3,15],[8,7,10],[9,12,8]];
+  const ros=rosterVac(); if(!ros.length) return;
+  S.vacSim=base.map(([m,d,n],i)=>{ const pe=ros[(i*5+2)%ros.length]; const dias=[]; for(let k=0;k<n;k++) dias.push(isoD(new Date(y,m,d+k)));
+    return {id:"sim"+i, bp:pe.bp, dias, n, at:new Date(HOY.getTime()-i*3600e3).toISOString(), estado:i===16?"aprobada":i===19?"rechazada":"pendiente", sim:true}; });
+  render();
+}
+
+/* ---------- Gráficos ---------- */
+function barrasMesVac(items, max){ // items: [{lab, segs:[[color,n,clase]], total, sel, tip, click}]
+  const top=Math.max(4,Math.ceil(max/4)*4); const t=[0,top/2,top];
+  return `<div class="cols" style="height:180px"><div class="cols-y">${t.map(v=>`<span class="num" style="bottom:${v/top*100}%">${Math.round(v)}</span>`).join("")}</div>
+    <div class="cols-plot">${t.slice(1).map(v=>`<div class="gridl" style="bottom:${v/top*100}%"></div>`).join("")}<div class="cols-bars">${items.map(it=>`<div class="col ${it.sel?"sel":""}" ${it.click?drill(it.click):""} data-tip="${esc(it.tip||"")}">${it.segs.filter(s=>s[1]>0).map(([c,v,cls])=>`<span class="${cls||""}" style="height:calc(${v/top*100}% - 2px);${c?`background:${c}`:""}"></span>`).join("")}${it.total?`<span class="lab num" style="bottom:calc(${it.total/top*100}% + 2px);height:auto;background:none">${it.total}</span>`:""}</div>`).join("")}</div></div></div>
+    <div class="cols-x">${items.map(it=>`<span class="${it.sel?"sel":""}">${esc(it.lab)}</span>`).join("")}</div>`;
+}
+function calorAnual(M, y, cupo){
+  const h=isoD(HOY);
+  const filas=MESES_CV.map((mn,m)=>{ const nd=new Date(y,m+1,0).getDate();
+    const cells=Array.from({length:31},(_,i)=>{ const d=i+1; if(d>nd) return `<td></td>`; const k=isoD(new Date(y,m,d)); const c=M[k];
+      const n=ocup(c)+(c?c.sol.size:0); const w=new Date(y,m,d).getDay();
+      const tip=`<b>${d} ${mn} ${y}</b><br>${ocup(c)} de vacaciones${c&&c.sol.size?` · ${c.sol.size} solicitudes`:""}${n>cupo?`<br>Sobre el cupo de ${cupo}`:""}`;
+      return `<td><button class="hc ${qCupo(n,cupo)} ${w===0||w===6?"we":""} ${k===h?"hoy":""} ${c&&c.sol.size?"has-sol":""}" ${n?drill(()=>abrirDiaVac(k,M)):""} data-tip="${esc(tip)}" aria-label="${d} ${mn}: ${n}">${n||""}</button></td>`; }).join("");
+    return `<tr><th>${mn}</th>${cells}</tr>`; }).join("");
+  return `<div class="hm-wrap"><table class="hcal"><thead><tr><th></th>${Array.from({length:31},(_,i)=>`<th>${(i+1)%5===0||i===0?i+1:""}</th>`).join("")}</tr></thead><tbody>${filas}</tbody></table></div>`;
+}
+function abrirDiaVac(k,M){
+  const c=M[k]||{tom:new Set(),prog:new Set(),sol:new Set()}; const E=escalafon().map;
+  const lst=(set,lab,cls)=>[...set].map(bp=>`<div class="drow" style="grid-template-columns:1fr auto"><span><b>${esc(nombreVacDe(bp))}</b>${E[bp]?`<div class="mt">Escalafón #${E[bp].n}${E[bp].anio?` · ${E[bp].anio} T${E[bp].trim}`:""}</div>`:""}</span><span class="pill ${cls}">${lab}</span></div>`).join("");
+  abrirPanel(esc(fmtL(parseISO(k))), `${ocup(c)} de vacaciones · cupo ${cupoVac()}${c.sol.size?` · ${c.sol.size} solicitudes`:""}`,
+    `<div class="dgroup">${lst(c.tom,"Tomada","good")}${lst(c.prog,"Programada","info")}${lst(c.sol,"Solicitada","warn")}</div>`);
+}
+
+/* ---------- Secciones ---------- */
+function tableroVac(){
+  const c=cfgVac(); const ab=ventanaAbierta(); const cupo=cupoVac();
+  const M=mapaDias(); const E=escalafon(); const ros=rosterVac();
+  const yMax=HOY.getFullYear()+1, years=[]; for(let y=2024;y<=yMax;y++) years.push(y);
+  const yr=years.includes(S.vacAnio)?S.vacAnio:HOY.getFullYear();
+  const sols=solsDash().slice().sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+  const sim=(S.vacSim||[]).length>0;
+
+  // 1 · vencimientos M-2
+  const venc=ros.map(pe=>{ const vp=vacPersona(pe.bp); const p=periodoVac(vp,anioVig(vp,HOY),HOY,extraDash(pe.bp)); const porTomar=p.der-p.tom; const libres=p.der-p.tom-p.prog-p.sol;
+    let niv=null; if(p.diasRenov<=61 && porTomar>0) niv = libres>0 && (p.diasRenov<=30 || libres>=10) ? "alta" : libres>0 ? "media" : "baja";
+    return {pe,p,porTomar,libres,niv}; });
+  const ordN={alta:0,media:1,baja:2};
+  const m2=venc.filter(v=>v.niv).sort((a,b)=>ordN[a.niv]-ordN[b.niv]||a.p.diasRenov-b.p.diasRenov);
+  const prox=venc.filter(v=>!v.niv && v.porTomar>0 && v.p.diasRenov<=120 && v.p.diasRenov>0).sort((a,b)=>a.p.diasRenov-b.p.diasRenov);
+  const nivTxt={alta:"Prioridad alta",media:"Prioridad media",baja:"Seguimiento"}, nivCls={alta:"crit",media:"warn",baja:"info"};
+  const vencCard=v=>`<button class="vcard ${v.niv}" ${drill(()=>irInstructorVac(v.pe.bp))}>
+    <div class="row between"><b>${esc(v.pe.nombre)}</b><span class="pill ${nivCls[v.niv]}"><i></i>${nivTxt[v.niv]}</span></div>
+    <div class="vcard-m"><div class="vcd"><b class="num">${v.p.diasRenov}</b><small>días para vencer</small></div>
+      <div><span class="hint">Vence el</span><div class="vcf">${fmtL(v.p.fin)}</div><span class="hint">Periodo ${v.p.etiqueta}</span></div>
+      <div style="text-align:right"><span class="hint">Pendientes por tomar</span><div class="vcf num">${v.porTomar} días</div><span class="hint">${v.libres>0?`${v.libres} sin programar`:"todos programados"}</span></div></div>
+    ${vbar(v.p,false)}</button>`;
+  const span=120, pts=venc.filter(v=>v.p.diasRenov>=0&&v.p.diasRenov<=span);
+  const timeline=`<div class="vtl"><div class="vtl-axis">${[0,30,61,90,120].map(d=>`<span style="left:${d/span*100}%">${d===0?"Hoy":d===61?"M-2":"+"+d+" d"}</span>`).join("")}</div>
+    <div class="vtl-band" style="width:${61/span*100}%"></div>
+    ${pts.map((v,i)=>`<i class="vtl-pt ${v.niv||"ok"}" style="left:${v.p.diasRenov/span*100}%;top:${10+(i%3)*14}px" data-tip="${esc(`<b>${v.pe.nombre}</b><br>Vence ${fmtC(v.p.fin)} · ${v.porTomar} por tomar`)}"></i>`).join("")}</div>`;
+  const sec1=`<section class="card stack" id="vq1"><div class="chart-title" style="margin:0"><div><span class="eyebrow">1 · ¿Quién está próximo a vencer?</span><h2>Vencimientos en los próximos 2 meses</h2><p>Alerta M-2: periodos que vencen en 61 días o menos y todavía tienen días por tomar. Prioridad alta si quedan días sin programar y vence en 30 días o menos, o si quedan 10 o más sin programar.</p></div></div>
+    ${timeline}
+    ${m2.length?`<div class="vcards">${m2.map(vencCard).join("")}</div>`:`<div class="note">Nadie vence con días pendientes en los próximos 2 meses.</div>`}
+    ${prox.length?`<div><span class="eyebrow">Entran a M-2 pronto</span><div class="chips" style="margin-top:6px">${prox.slice(0,8).map(v=>`<span class="chip" data-tip="${esc(`${v.porTomar} por tomar · ${v.libres} sin programar`)}">${esc(cortoNom(v.pe.nombre))} · vence ${fmtC(v.p.fin)} <b class="num">${v.porTomar}</b></span>`).join("")}</div></div>`:""}</section>`;
+
+  // 2 · comportamiento del año
+  const mesData=MESES_CV.map((mn,m)=>{ let tom=0,prog=0,sol=0,pico=0,picoD=null; const pers=new Set(), persSol=new Set(); const nd=new Date(yr,m+1,0).getDate();
+    for(let d=1; d<=nd; d++){ const k=isoD(new Date(yr,m,d)); const cc=M[k]; if(!cc) continue; tom+=cc.tom.size; prog+=cc.prog.size; sol+=cc.sol.size;
+      cc.tom.forEach(b=>pers.add(b)); cc.prog.forEach(b=>pers.add(b)); cc.sol.forEach(b=>persSol.add(b)); const o=ocup(cc); if(o>pico){ pico=o; picoD=k; } }
+    return {mn,m,tom,prog,sol,pers:pers.size,persSol:persSol.size,pico,picoD}; });
+  const maxD=Math.max(1,...mesData.map(x=>x.tom+x.prog+x.sol)), maxP=Math.max(1,...mesData.map(x=>x.pers));
+  const tot=mesData.reduce((a,x)=>a+x.tom+x.prog,0);
+  const conV=mesData.filter(x=>x.tom+x.prog>0);
+  const picoM=conV.slice().sort((a,b)=>(b.tom+b.prog)-(a.tom+a.prog))[0], valleM=conV.slice().sort((a,b)=>(a.tom+a.prog)-(b.tom+b.prog))[0];
+  const picoDia=mesData.slice().sort((a,b)=>b.pico-a.pico)[0];
+  const diasSobre=Object.keys(M).filter(k=>k.startsWith(String(yr))&&ocup(M[k])>cupo).length;
+  const abrirMes=m=>{ const by={}; const nd=new Date(yr,m+1,0).getDate();
+    for(let d=1; d<=nd; d++){ const cc=M[isoD(new Date(yr,m,d))]; if(!cc) continue; ["tom","prog","sol"].forEach(t=>cc[t].forEach(b=>{ (by[b]=by[b]||{tom:0,prog:0,sol:0})[t]++; })); }
+    const rows=Object.keys(by).sort((a,b)=>(by[b].tom+by[b].prog+by[b].sol)-(by[a].tom+by[a].prog+by[a].sol));
+    abrirPanel(esc(`${cap(MESES_N[m])} ${yr}`), `${rows.length} instructores con vacaciones o solicitudes`, rows.length?`<div class="dgroup">${rows.map(bp=>{ const x=by[bp]; const n=x.tom+x.prog+x.sol;
+      return `<div class="drow" style="grid-template-columns:1fr 120px 40px"><span><b>${esc(nombreVacDe(bp))}</b><div class="mt">${x.tom?x.tom+" tomados ":""}${x.prog?x.prog+" programados ":""}${x.sol?x.sol+" solicitados":""}</div></span><span class="vbar" style="align-self:center"><span class="vt" style="flex:${x.tom}"></span><span class="vp" style="flex:${x.prog}"></span><span class="vs" style="flex:${x.sol}"></span><span class="vl" style="flex:${Math.max(0,nd-n)}"></span></span><b class="num" style="text-align:right">${n}</b></div>`; }).join("")}</div>`:`<p class="empty">Sin vacaciones en este mes.</p>`); };
+  const chartDias=barrasMesVac(mesData.map(x=>({lab:x.mn,total:x.tom+x.prog+x.sol,sel:yr===HOY.getFullYear()&&x.m===HOY.getMonth(),segs:[["var(--c-vac)",x.tom],["",x.prog,"vp"],["",x.sol,"vs"]],tip:`<b>${cap(MESES_N[x.m])} ${yr}</b><br>${x.tom} días tomados · ${x.prog} programados${x.sol?` · ${x.sol} solicitados`:""}`,click:()=>abrirMes(x.m)})),maxD);
+  const chartPers=barrasMesVac(mesData.map(x=>({lab:x.mn,total:x.pers,sel:x===picoM,segs:[[x.pico>cupo+1?"var(--sem5)":x.pico>cupo?"var(--sem4)":"var(--accent)",x.pers]],tip:`<b>${cap(MESES_N[x.m])}</b><br>${x.pers} instructores con vacaciones${x.persSol?`<br>${x.persSol} con solicitudes`:""}<br>Máximo simultáneo: ${x.pico}`,click:()=>abrirMes(x.m)})),maxP);
+  const porP=ros.map(pe=>{ let n=0; Object.keys(M).forEach(k=>{ if(k.startsWith(String(yr)) && (M[k].tom.has(pe.bp)||M[k].prog.has(pe.bp))) n++; }); return {pe,n}; }).sort((a,b)=>b.n-a.n);
+  const avgP=media(porP.map(x=>x.n)), maxR=Math.max(1,...porP.map(x=>x.n));
+  const rank=`<div class="rank">${porP.map(x=>{ const dev=avgP?(x.n-avgP)/avgP:0; return `<div class="rowhit" ${drill(()=>irInstructorVac(x.pe.bp))} data-tip="${esc(`<b>${x.pe.nombre}</b><br>${x.n} días en ${yr} · promedio ${f1(avgP)}`)}"><span class="nm">${esc(x.pe.nombre)}</span><span class="track"><span class="meanline" style="left:${avgP/maxR*100}%"></span><span class="bar" style="width:${x.n/maxR*100}%;background:var(--c-vac)"></span></span><span class="val num">${x.n}${Math.abs(dev)>=0.3?` <span style="color:${dev>0?"var(--crit)":"var(--warn)"}">${dev>0?"▲":"▼"}</span>`:""}</span></div>`; }).join("")}</div>`;
+  const ins=(t,v,s)=>`<div class="vins"><span class="l">${t}</span><b>${v}</b><span class="s">${s}</span></div>`;
+  const sec2=`<section class="card stack" id="vq2"><div class="row between"><div><span class="eyebrow">2 · ¿Cuándo se concentran las vacaciones?</span><h2>Comportamiento del año</h2></div>
+      <div class="seg" role="group" aria-label="Año">${years.map(y=>`<button aria-pressed="${y===yr}" data-vyr="${y}">${y}</button>`).join("")}</div></div>
+    <div class="vinsights">${ins("Mes con más vacaciones", picoM?cap(MESES_N[picoM.m]):"—", picoM?`${picoM.tom+picoM.prog} días · ${picoM.pers} instructores`:"")}
+      ${ins("Mes con menos", valleM?cap(MESES_N[valleM.m]):"—", valleM?`${valleM.tom+valleM.prog} días`:"")}
+      ${ins("Máximo simultáneo", picoDia&&picoDia.pico?`${picoDia.pico} personas`:"—", picoDia&&picoDia.picoD?`el ${fmtC(parseISO(picoDia.picoD))}`:"")}
+      ${ins("Días sobre el cupo", diasSobre, `más de ${cupo} instructores a la vez`)}
+      ${ins("Total del año", tot, "días tomados y programados")}</div>
+    <div class="grid2e">
+      <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Días de vacaciones por mes</h3><p>Toca un mes para ver quiénes.</p></div><div class="legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomados</span><span><i class="sw vp-sw"></i>Programados</span><span><i class="sw vs-sw"></i>Solicitados</span></div></div>${chartDias}</div>
+      <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Instructores de vacaciones por mes</h3><p>Personas distintas con al menos un día. Naranja o rojo: algún día del mes superó el cupo de ${cupo}.</p></div></div>${chartPers}</div>
+    </div>
+    <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Calendario de presión</h3><p>Cada celda es un día; el número es cuántos instructores están de vacaciones o lo pidieron. Semáforo según el cupo de ${cupo} por día: verde holgado, amarillo en el cupo, rojo sobre el cupo. Toca un día para ver quiénes.</p></div>
+      <div class="semleg"><span><i class="sw q1"></i>Holgado</span><span><i class="sw q3"></i>${cupo} (cupo)</span><span><i class="sw q4"></i>+1</span><span><i class="sw q5"></i>+2 o más</span></div></div>
+      ${calorAnual(M,yr,cupo)}</div>
+    <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Quiénes tomaron más y menos días en ${yr}</h3><p>Días tomados y programados en el año calendario. La línea marca el promedio (${f1(avgP)}). Cada periodo DGAC empieza en una fecha distinta: compáralo con el saldo de su periodo.</p></div></div>${rank}</div>
+  </section>`;
+
+  // 3 · ciclo de solicitud
+  const nP=sols.filter(s=>s.estado==="pendiente").length, nA=sols.filter(s=>s.estado==="aprobada").length, nR=sols.filter(s=>s.estado==="rechazada").length, nT=sols.length;
+  const yS=Number(c.mesDesde.slice(0,4));
+  const rango=[]; { let y=Number(c.mesDesde.slice(0,4)), m=Number(c.mesDesde.slice(5)); const [y2,m2b]=c.mesHasta.split("-").map(Number); while((y<y2||(y===y2&&m<=m2b)) && rango.length<24){ rango.push(`${y}-${String(m).padStart(2,"0")}`); if(++m>12){ m=1; y++; } } }
+  const solMes=rango.map(ms=>{ const ps=new Set(), pa=new Set(); let dSol=0, pico=0; const [y,m]=ms.split("-").map(Number); const nd=new Date(y,m,0).getDate();
+    for(let d=1; d<=nd; d++){ const cc=M[isoD(new Date(y,m-1,d))]; if(!cc) continue; cc.sol.forEach(b=>ps.add(b)); cc.prog.forEach(b=>pa.add(b)); dSol+=cc.sol.size; pico=Math.max(pico,ocup(cc)+cc.sol.size); }
+    return {ms,ps:ps.size,pa:pa.size,dSol,pico}; });
+  const maxS=Math.max(1,...solMes.map(x=>x.ps+x.pa));
+  const chartSol=barrasMesVac(solMes.map(x=>({lab:MESES_CV[Number(x.ms.slice(5))-1],total:x.ps+x.pa,segs:[["var(--c-vac)",x.pa],["",x.ps,"vs"]],tip:`<b>${mesLargo(x.ms)}</b><br>${x.ps} personas solicitando · ${x.pa} ya programadas<br>${x.dSol} días solicitados<br>Pico del mes: ${x.pico} a la vez${x.pico>cupo?" (sobre el cupo)":""}`,click:()=>{ S.vacAnio=Number(x.ms.slice(0,4)); render(); const el=document.getElementById("vq2"); if(el) el.scrollIntoView({behavior:"smooth"}); }})),maxS);
+  const conf=conflictos(M,cupo);
+  const rangoVacio=!solMes.some(x=>x.ps+x.pa);
+  const vacioRango=`<div class="note">Aún no hay vacaciones programadas ni solicitudes pendientes entre ${mesLargo(c.mesDesde)} y ${mesLargo(c.mesHasta)}${nR?" (las rechazadas no ocupan cupo)":""}. Los gráficos se llenan cuando coordinación programe días o los instructores envíen solicitudes.</div>`;
+  const hayReales=(VAC().solicitudes||[]).some(s=>s.estado!=="cancelada");
+  const sec3=`<section class="card stack" id="vq3"><div class="row between"><div><span class="eyebrow">3 · ¿Dónde hay exceso de solicitudes?</span><h2>Ciclo de solicitud</h2></div>
+      <div class="row"><span class="pill ${ab?"good":""}"><i></i>${ab?"Ventana abierta":"Ventana cerrada"}</span><span class="pill">Cupo ${cupo} por día</span>${sim?`<button class="btn sm" data-vsim="0">Quitar ejemplo</button>`:!hayReales?`<button class="btn sm" data-vsim="1">Ver con solicitudes de ejemplo</button>`:""}</div></div>
+    ${sim?`<div class="note"><b>Datos de ejemplo.</b> Estás viendo solicitudes simuladas para ver cómo se comporta el tablero durante un ciclo. Solo existen en este navegador: no se guardan, no las ve nadie más y desaparecen al recargar.</div>`:""}
+    <div class="vstatus">
+      <div class="vst"><span class="l">Solicitudes</span><b class="num">${nT}</b><span class="s">${plural(new Set(sols.map(s=>s.bp)).size,"instructor","instructores")}</span></div>
+      <div class="vst" style="border-left-color:var(--warn)"><span class="l">Pendientes</span><b class="num">${nP}</b><span class="s">por decidir</span></div>
+      <div class="vst" style="border-left-color:var(--good)"><span class="l">Aprobadas</span><b class="num">${nA}</b><span class="s">${nT?pct(nA/nT):"—"}</span></div>
+      <div class="vst" style="border-left-color:var(--crit)"><span class="l">Rechazadas</span><b class="num">${nR}</b><span class="s">${nT?pct(nR/nT):"—"}</span></div>
+      <div class="vst" style="border-left-color:var(--sem5)"><span class="l">Ventanas sobre cupo</span><b class="num">${conf.length}</b><span class="s">${conf.reduce((a,w)=>a+w.dias.length,0)} días en conflicto</span></div>
+    </div>
+    <div class="meter" style="height:10px">${nA?`<span style="flex:${nA};background:var(--good)"></span>`:""}${nP?`<span style="flex:${nP};background:var(--warn)"></span>`:""}${nR?`<span style="flex:${nR};background:var(--crit)"></span>`:""}${!nT?`<span style="flex:1;background:var(--line-2)"></span>`:""}</div>
+    <div class="grid2e">
+      <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Personas por mes</h3><p>Rango habilitado: ${mesLargo(c.mesDesde)} a ${mesLargo(c.mesHasta)}. El cupo y el rango se cambian en “Ventana de solicitud de vacaciones”.</p></div><div class="legend"><span><i class="sw" style="background:var(--c-vac)"></i>Ya programadas</span><span><i class="sw vs-sw"></i>Solicitando</span></div></div>${rangoVacio?vacioRango:chartSol}</div>
+      <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Demanda día a día ${yS}</h3><p>Programadas más solicitadas, frente al cupo de ${cupo}. El borde marca días con solicitudes.</p></div></div>${rangoVacio?`<p class="empty">Sin días programados ni solicitados en ${yS}.</p>`:calorAnual(M,yS,cupo)}</div>
+    </div></section>`;
+
+  // 4 · prioridad
+  const pendPorBp={}; sols.filter(s=>s.estado==="pendiente").forEach(s=>(pendPorBp[s.bp]=pendPorBp[s.bp]||[]).push(s));
+  const botones=s=>!s?"":s.sim?`<span class="row" style="gap:6px"><button class="btn sm primary" data-simdec="${esc(s.id)}|aprobada">Aprobar</button><button class="btn sm" data-simdec="${esc(s.id)}|rechazada">Rechazar</button></span>`
+    : esAdmin()?`<span class="row" style="gap:6px"><button class="btn sm primary" data-aprobar="${esc(s.id)}">Aprobar</button><button class="btn sm" data-rechazar="${esc(s.id)}">Rechazar</button></span>`:"";
+  const confHTML=conf.map(w=>{ const ranked=w.solicitantes.map(bp=>E.map[bp]||{bp,nombre:nombreVacDe(bp),n:999}).sort((a,b)=>a.n-b.n);
+    return `<div class="vconf"><div class="row between"><div><b>${fmtC(w.desde)}${w.dias.length>1?` – ${fmtC(w.hasta)}`:""} ${w.hasta.getFullYear()}</b> <span class="hint">· ${plural(w.dias.length,"día")} · hasta ${w.maxDem} personas para un cupo de ${cupo}</span></div><span class="pill ${w.libres?"warn":"crit"}">${w.libres?plural(w.libres,"cupo libre","cupos libres"):"Sin cupo libre"}</span></div>
+      <ol class="vprio">${ranked.map((r,i)=>{ const dentro=i<w.libres; const s=(pendPorBp[r.bp]||[]).find(s=>s.dias.some(k=>w.dias.includes(k)));
+        const porque=i>0?`Después de ${cortoNom(ranked[i-1].nombre)}: ${motivoPrioridad(ranked[i-1],r)}`:(ranked[1]?`Antes que ${cortoNom(ranked[1].nombre)}: ${motivoPrioridad(r,ranked[1])}`:"Única solicitud en esta ventana");
+        return `<li class="${dentro?"in":"out"}"><span class="vp-n">${i+1}</span><span class="vp-b"><b>${esc(r.nombre)}</b><span class="hint">${r.anio?`Escalafón #${r.n} · ${r.anio} · T${r.trim}${r.manual?" (cargado)":""}`:"Sin escalafón registrado"} · ${esc(porque)}</span></span>
+          <span class="pill ${dentro?"good":"crit"}">${dentro?"Dentro del cupo":"Fuera del cupo"}</span>${botones(s)}</li>`; }).join("")}</ol></div>`; }).join("");
+  const pendSin=sols.filter(s=>s.estado==="pendiente" && !conf.some(w=>s.dias.some(k=>w.dias.includes(k))));
+  const hayOv=Object.keys(VAC().escalafon||{}).length>0;
+  const escList=`<div class="vesc">${E.rows.map(r=>`<div class="vesc-r" data-tip="${esc(`<b>${r.nombre}</b><br>${r.fecha?"Fecha DGAC original "+fmtL(r.fecha):"Sin fecha DGAC original"}`)}"><span class="vp-n sm">${r.n}</span><span class="vesc-n">${esc(r.nombre)}</span><span class="hint num">${r.anio||"—"}${r.trim?" · T"+r.trim:""}${r.manual?" ✎":""}</span></div>`).join("")}</div>`;
+  const sec4=`<section class="card stack" id="vq4"><div class="chart-title" style="margin:0"><div><span class="eyebrow">4 · ¿Quién tiene prioridad y por qué?</span><h2>Priorización de solicitudes</h2><p>Cuando una ventana de días supera el cupo, las solicitudes se ordenan por escalafón y, dentro del mismo escalafón, por trimestre. Los primeros hasta completar el cupo quedan dentro; el resto, fuera. La decisión final es de coordinación.</p></div>
+      ${esAdmin()?`<button class="btn sm" data-escedit="1">Editar escalafón</button>`:""}</div>
+    <div class="grid2" style="align-items:start">
+      <div class="stack" style="gap:12px">${conf.length?confHTML:`<div class="note">No hay ventanas sobre el cupo${nP?"; las solicitudes pendientes caben en el cupo":""}.</div>`}
+        ${pendSin.length?`<p class="hint">${plural(pendSin.length,"solicitud pendiente","solicitudes pendientes")} sin conflicto de cupo: se deciden en “Solicitudes por revisar”.</p>`:""}</div>
+      <div><span class="eyebrow">Orden de escalafón</span><p class="hint" style="margin:4px 0 8px">${hayOv?"Incluye valores cargados por coordinación (✎).":"Calculado desde la Fecha DGAC original de la hoja Vacaciones: año = escalafón, trimestre de esa fecha = desempate. Cárgalo oficial con “Editar escalafón”."}</p>${escList}</div>
+    </div></section>`;
+
+  const resumen=`<div class="vqs">
+    <button class="vq ${m2.some(v=>v.niv==="alta")?"bad":m2.length?"mid":"ok"}" data-vgo="vq1"><span class="vq-n">1</span><span><small>¿Quién vence?</small><b>${m2.length} en M-2</b><em>${m2.filter(v=>v.niv==="alta").length} de prioridad alta</em></span></button>
+    <button class="vq" data-vgo="vq2"><span class="vq-n">2</span><span><small>¿Cuándo se concentran?</small><b>${picoM?cap(MESES_N[picoM.m]):"—"} ${yr}</b><em>${picoM?picoM.pers:0} instructores · ${diasSobre} días sobre cupo</em></span></button>
+    <button class="vq ${conf.length?"bad":"ok"}" data-vgo="vq3"><span class="vq-n">3</span><span><small>¿Dónde hay exceso?</small><b>${plural(conf.length,"ventana")}</b><em>${nP} solicitudes pendientes</em></span></button>
+    <button class="vq" data-vgo="vq4"><span class="vq-n">4</span><span><small>¿Quién tiene prioridad?</small><b>${conf.reduce((a,w)=>a+w.solicitantes.length,0)} por priorizar</b><em>escalafón y trimestre</em></span></button></div>`;
+  /* Prioridad de una solicitud: escalafón y, si cae en una ventana sobre el cupo, su lugar en ella */
+  const prio=s=>{ const r=E.map[s.bp]; const w=conf.find(w=>(s.dias||[]).some(k=>w.dias.includes(k)));
+    if(!w) return {n:r?r.n:null, anio:r&&r.anio, trim:r&&r.trim, ventana:null};
+    const ranked=w.solicitantes.map(bp=>E.map[bp]||{bp,n:999}).sort((a,b)=>a.n-b.n); const i=ranked.findIndex(x=>x.bp===s.bp);
+    return {n:r?r.n:null, anio:r&&r.anio, trim:r&&r.trim, ventana:`${fmtC(w.desde)}${w.dias.length>1?"–"+fmtC(w.hasta):""}`, lugar:i+1, de:ranked.length, dentro:i<w.libres}; };
+  return {resumen, secciones: sec1+sec2+sec3+sec4, prio};
+}
+
+function abrirEditorEscalafon(){
+  const E=escalafon(); const ov=VAC().escalafon||{};
+  abrirPanel("Escalafón", "Carga el año de escalafón y el trimestre oficial. Deja vacío para usar la Fecha DGAC original.",
+    `<form id="fEsc" class="stack" style="gap:8px">${E.rows.map(r=>`<div class="row" style="gap:8px;flex-wrap:nowrap"><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.nombre)}</span>
+      <input class="input" style="width:92px" type="number" min="1970" max="2100" placeholder="Año" data-esc-a="${esc(r.bp)}" value="${ov[r.bp]&&ov[r.bp].anio||""}" aria-label="Año de escalafón de ${esc(r.nombre)}">
+      <select class="input" style="width:82px" data-esc-t="${esc(r.bp)}" aria-label="Trimestre de ${esc(r.nombre)}"><option value="">T</option>${[1,2,3,4].map(t=>`<option value="${t}" ${ov[r.bp]&&ov[r.bp].trim==t?"selected":""}>T${t}</option>`).join("")}</select></div>`).join("")}
+      <p class="err" id="escErr"></p><div class="row"><button class="btn primary" type="submit" id="escBtn">Guardar escalafón</button></div></form>`);
+  const f=document.getElementById("fEsc");
+  f.onsubmit=async e=>{ e.preventDefault(); const mapa={};
+    f.querySelectorAll("[data-esc-a]").forEach(i=>{ const bp=i.dataset.escA; const a=Number(i.value)||null; const t=Number(f.querySelector(`[data-esc-t="${bp}"]`).value)||null; if(a||t) mapa[bp]={anio:a,trim:t}; });
+    const b=document.getElementById("escBtn"); setCargando(b,true,"Guardando…");
+    try{ const r=await api("apiGuardarEscalafonVac",S.token,mapa); S.vac.escalafon=r; const sc=document.querySelector(".scrim"); if(sc) sc.remove(); toast("Escalafón guardado"); render(); }
+    catch(err){ setCargando(b,false); document.getElementById("escErr").textContent=err.message; } };
+}
+function wireTableroVac(){
+  document.querySelectorAll("[data-vyr]").forEach(b=>b.onclick=()=>{ S.vacAnio=Number(b.dataset.vyr); render(); });
+  document.querySelectorAll("[data-vgo]").forEach(b=>b.onclick=()=>{ const el=document.getElementById(b.dataset.vgo); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); });
+  document.querySelectorAll("[data-vsim]").forEach(b=>b.onclick=()=>{ if(b.dataset.vsim==="1") simularCiclo(); else { S.vacSim=[]; render(); } });
+  document.querySelectorAll("[data-simdec]").forEach(b=>b.onclick=()=>{ const [id,est]=b.dataset.simdec.split("|"); const s=(S.vacSim||[]).find(x=>x.id===id); if(s){ s.estado=est; toast(est==="aprobada"?"Aprobada (ejemplo)":"Rechazada (ejemplo)"); render(); } });
+  document.querySelectorAll("[data-escedit]").forEach(b=>b.onclick=abrirEditorEscalafon);
+}
+
 /* ============ Pestaña Vacaciones (coordinación) ============ */
 function admVac(){
   const c=cfgVac(); const ab=ventanaAbierta(); const vu=VAC().ventanaUltima;
   const sols=(VAC().solicitudes||[]).slice().sort((a,b)=>String(b.at).localeCompare(String(a.at)));
-  const pend=sols.filter(s=>s.estado==="pendiente"), dec=sols.filter(s=>s.estado!=="pendiente").slice(0,12);
+  const T=tableroVac();
+  const pend=sols.filter(s=>s.estado==="pendiente"), revs=sols.filter(revisionPendiente), dec=sols.filter(s=>s.estado!=="pendiente"&&!revisionPendiente(s)).slice(0,12);
+  const prioOrd=s=>{ const p=T.prio(s); return p.ventana?(p.dentro?0:1)*1000+p.lugar:2000+(p.n||999); };
+  pend.sort((a,b)=>prioOrd(a)-prioOrd(b));
+  const prioHTML=s=>{ const p=T.prio(s); const esc1=p.n?`<span class="pill">Escalafón #${p.n}${p.anio?` · ${p.anio} T${p.trim}`:""}</span>`:"";
+    return p.ventana?`<div class="row" style="gap:6px">${esc1}<span class="pill ${p.dentro?"good":"crit"}">${p.dentro?"Dentro del cupo":"Fuera del cupo"} · ${p.lugar}.º de ${p.de} (${esc(p.ventana)})</span></div>`
+      : esc1?`<div class="row" style="gap:6px">${esc1}<span class="pill good">Sin conflicto de cupo</span></div>`:""; };
   const solRow=(s,acc)=>{ const pe=MO.personas[s.bp]; const vp=vacPersona(s.bp);
     let val=""; if(vp){ const ex=extraDe(s.bp); const porY={}; (s.dias||[]).forEach(k=>{ const Y=anioDeFecha(vp,parseISO(k)); porY[Y]=(porY[Y]||0)+1; });
       val=Object.keys(porY).map(Number).map(Y=>{ const p=periodoVac(vp,Y,HOY,ex); const disp=p.der-p.tom-p.prog-(s.estado==="pendiente"?p.sol-porY[Y]:p.sol); return `Periodo ${p.etiqueta}: ${porY[Y]} de ${disp} disponibles`; }).join(" · "); }
-    return `<div class="obs-item"><div class="h"><b>${esc(pe?pe.nombre:(s.nombre||s.bp))}</b>${pillSol(s)}</div>
+    return `<div class="obs-item solv" id="sol-${esc(s.id)}"><div class="h"><b>${esc(pe?pe.nombre:(s.nombre||s.bp))}</b>${pillSol(s)}</div>
       <p><b class="num">${plural(s.n||(s.dias||[]).length,"día")}</b> · ${esc(rangoTxt(s.dias))}</p><span class="hint">${esc(val)}${val?" · ":""}enviada ${fechaCorta(s.at)}${s.decididoPor&&!acc?` · ${esc(ESTADO_SOL[s.estado]?ESTADO_SOL[s.estado][1].toLowerCase():s.estado)} por ${esc(s.decididoPor)}`:""}</span>
+      ${acc?prioHTML(s):""}
+      ${conversacionSol(s,"admin")}
       ${acc?`<div class="row"><button class="btn sm primary" data-aprobar="${esc(s.id)}">Aprobar</button><button class="btn sm" data-rechazar="${esc(s.id)}">Rechazar</button></div>`:""}</div>`; };
   return `<div class="stack">
+    ${T.resumen}
     <div class="grid2e">
       <div class="card stack" style="gap:12px">
         <div class="row between"><h3>Ventana de solicitud de vacaciones</h3><span class="pill ${ab?"good":""}"><i></i>${ab?"Habilitada":"No habilitada"}</span></div>
@@ -229,17 +475,20 @@ function admVac(){
           <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="cfgOn" ${c.habilitado?"checked":""}> Habilitar solicitudes</label>
           <div class="grid2e" style="gap:10px"><div class="field"><label for="cfgDesde">Abierta desde</label><input class="input" type="date" id="cfgDesde" value="${esc(c.desde)}"></div><div class="field"><label for="cfgHasta">Abierta hasta</label><input class="input" type="date" id="cfgHasta" value="${esc(c.hasta)}"></div></div>
           <div class="grid2e" style="gap:10px"><div class="field"><label for="cfgMD">Se pueden pedir días desde</label><input class="input" type="month" id="cfgMD" value="${esc(c.mesDesde)}"></div><div class="field"><label for="cfgMH">Hasta</label><input class="input" type="month" id="cfgMH" value="${esc(c.mesHasta)}"></div></div>
+          <div class="field" style="max-width:220px"><label for="cfgCupo">Cupo por día (instructores a la vez)</label><input class="input" type="number" min="1" max="20" id="cfgCupo" value="${esc(cupoVac())}"></div>
           <p class="err" id="cfgErr"></p>
           <div><button class="btn primary" type="submit" id="cfgBtn">Guardar</button></div>
         </form>
         ${vu?`<p class="hint">Última ventana registrada en el archivo de vacaciones: del ${fmtL(parseISO(vu.desde))} al ${fmtL(parseISO(vu.hasta))}.</p>`:""}
       </div>
-      <div class="card"><div class="row between" style="margin-bottom:8px"><h3>Solicitudes por revisar</h3><span class="pill ${pend.length?"warn":""}">${pend.length}</span></div>
+      <div class="card"><div class="row between" style="margin-bottom:8px"><div><h3>Solicitudes por revisar</h3>${pend.length?`<p class="hint" style="margin-top:2px">Ordenadas por prioridad: primero las que caben en el cupo, según escalafón.</p>`:""}</div><span class="pill ${pend.length?"warn":""}">${pend.length}</span></div>
+        ${revs.length?`<div style="margin-bottom:12px"><div class="row between" style="margin-bottom:6px"><h3>Revisiones pedidas</h3><span class="pill crit">${revs.length}</span></div><div class="obs">${revs.map(s=>solRow(s,false)).join("")}</div></div>`:""}
         ${pend.length?`<div class="obs">${pend.map(s=>solRow(s,true)).join("")}</div>`:`<p class="empty">No hay solicitudes pendientes.</p>`}
         ${dec.length?`<h3 style="margin:14px 0 8px">Últimas decididas</h3><div class="obs">${dec.map(s=>solRow(s,false)).join("")}</div>`:""}</div>
     </div>
+    ${T.secciones}
     ${vacEquipoHTML()}
-    <p class="foot">Fuente: ${esc(VAC().fuente||"hoja Vacaciones")} (hojas Vacaciones, VacacionesDias y VacacionesBloques del Google Sheet base). El derecho de 2025-26 y 2026-27 viene de la hoja; los siguientes suman 1 día por renovación hasta 45. Las solicitudes aprobadas cuentan como programadas.</p>
+    <p class="foot">Fuente: ${esc(VAC().fuente||"hoja Vacaciones")} (hojas Vacaciones, VacacionesDias y VacacionesBloques del Google Sheet base). El derecho de cada periodo viene de la hoja VacacionesPeriodos; los periodos sin dato suman 1 día por renovación hasta 45. Las solicitudes aprobadas cuentan como programadas.</p>
   </div>`;
 }
 
@@ -247,7 +496,7 @@ function admVac(){
 async function enviarSolicitud(bp, btn){
   const dias=[...S.selVac].sort(); if(!dias.length) return;
   setCargando(btn,true,"Enviando…");
-  try{ const r=await api("apiEnviarSolicitudVac",S.token,dias,dispositivo()); S.vac.solicitudes=r.solicitudes; resetVac(); S.selVac.clear(); toast(`Solicitud de ${plural(dias.length,"día")} enviada a coordinación`); render(); }
+  try{ const r=await api("apiEnviarSolicitudVac",S.token,dias,dispositivo(),S.selCom||""); S.vac.solicitudes=r.solicitudes; resetVac(); S.selVac.clear(); S.selCom=""; toast(`Solicitud de ${plural(dias.length,"día")} enviada a coordinación`); render(); }
   catch(e){ setCargando(btn,false); toast(e.message); }
 }
 async function cancelarSolicitud(id, btn){
@@ -256,10 +505,124 @@ async function cancelarSolicitud(id, btn){
   try{ const r=await api("apiCancelarSolicitudVac",S.token,id); S.vac.solicitudes=r.solicitudes; resetVac(); toast("Solicitud cancelada"); render(); }
   catch(e){ setCargando(btn,false); toast(e.message); }
 }
-async function decidirSolicitud(id, estado, btn){
+const cerrarPanel = () => { const sc=document.querySelector(".scrim"); if(sc) sc.remove(); };
+const solPorId = id => (VAC().solicitudes||[]).find(x=>x.id===id);
+function resumenSolHTML(s){ return `<div class="obs-item"><div class="h"><b>${esc(nombreVacDe(s.bp)||s.nombre)}</b>${pillSol(s)}</div><p><b class="num">${plural(s.n||(s.dias||[]).length,"día")}</b> · ${esc(rangoTxt(s.dias))}</p>${conversacionSol(s,"ver")}</div>`; }
+/* Coordinación decide: abre un cuadro con comentario opcional */
+function abrirDecision(id, estado){
+  const s=solPorId(id); if(!s) return;
+  const ap=estado==="aprobada";
+  abrirPanel(ap?"Aprobar solicitud":"Rechazar solicitud", esc(`${nombreVacDe(s.bp)} · ${plural(s.n||(s.dias||[]).length,"día")}`),
+    `${resumenSolHTML(s)}<form id="fDec" class="stack" style="gap:8px"><div class="field"><label for="decCom">Comentario para el instructor <span class="hint">(opcional)</span></label><textarea class="input" id="decCom" maxlength="500" rows="3" placeholder="${ap?"Ej.: aprobado, recuerda coordinar tu reemplazo.":"Ej.: se cruza con la auditoría IOSA; prueba la semana siguiente."}"></textarea></div>
+      <p class="err" id="decErr"></p><div class="row"><button class="btn ${ap?"primary":"danger"}" type="submit" id="decBtn">${ap?"Aprobar":"Rechazar"}</button><button class="btn" type="button" id="decX">Cancelar</button></div></form>`);
+  document.getElementById("decX").onclick=cerrarPanel;
+  document.getElementById("fDec").onsubmit=e=>{ e.preventDefault(); decidirSolicitud(id,estado,document.getElementById("decBtn"),document.getElementById("decCom").value); };
+}
+async function decidirSolicitud(id, estado, btn, comentario){
   setCargando(btn,true,"…");
-  try{ const r=await api("apiDecidirSolicitudVac",S.token,id,estado); S.vac.solicitudes=r.solicitudes; resetVac(); toast(estado==="aprobada"?"Solicitud aprobada":"Solicitud rechazada"); render(); }
-  catch(e){ setCargando(btn,false); toast(e.message); }
+  try{ const r=await api("apiDecidirSolicitudVac",S.token,id,estado,comentario||""); S.vac.solicitudes=r.solicitudes; resetVac(); cerrarPanel(); toast(estado==="aprobada"?"Solicitud aprobada":"Solicitud rechazada"); render(); }
+  catch(e){ setCargando(btn,false); const x=document.getElementById("decErr"); if(x) x.textContent=e.message; else toast(e.message); }
+}
+/* Coordinación atiende una revisión pedida por el instructor */
+function abrirAtender(id){
+  const s=solPorId(id); if(!s) return;
+  const otro=s.estado==="aprobada"?"rechazada":"aprobada";
+  abrirPanel("Atender revisión", esc(`${nombreVacDe(s.bp)} · actualmente ${s.estado}`),
+    `${resumenSolHTML(s)}<form id="fAte" class="stack" style="gap:8px"><div class="field"><label for="ateCom">Respuesta para el instructor <span class="hint">(opcional)</span></label><textarea class="input" id="ateCom" maxlength="500" rows="3"></textarea></div>
+      <p class="err" id="ateErr"></p><div class="row"><button class="btn" type="button" data-ate="${s.estado}">Mantener ${s.estado}</button><button class="btn primary" type="button" data-ate="${otro}">Cambiar a ${otro}</button></div></form>`);
+  document.querySelectorAll("[data-ate]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"…");
+    try{ const r=await api("apiAtenderRevisionVac",S.token,id,b.dataset.ate,document.getElementById("ateCom").value); S.vac.solicitudes=r.solicitudes; resetVac(); cerrarPanel(); toast("Revisión atendida"); render(); }
+    catch(e){ setCargando(b,false); document.getElementById("ateErr").textContent=e.message; } });
+}
+/* El instructor responde a la decisión */
+async function responderSolicitud(id, tipo, motivo, btn){
+  setCargando(btn,true,"…");
+  try{ const r=await api("apiResponderSolicitudVac",S.token,id,tipo,motivo||"",dispositivo()); S.vac.solicitudes=r.solicitudes; resetVac(); cerrarPanel(); toast(tipo==="enterado"?"Listo, marcado como enterado":"Revisión enviada a coordinación"); render(); }
+  catch(e){ setCargando(btn,false); const x=document.getElementById("revErr"); if(x) x.textContent=e.message; else toast(e.message); }
+}
+function abrirPedirRevision(id){
+  const s=solPorId(id); if(!s) return;
+  abrirPanel("Pedir revisión", "Coordinación verá tu motivo y podrá mantener o cambiar la decisión. Solo puedes pedirla una vez.",
+    `${resumenSolHTML(s)}<form id="fRev" class="stack" style="gap:8px"><div class="field"><label for="revTxt">¿Por qué pides la revisión?</label><textarea class="input" id="revTxt" maxlength="500" rows="3" required></textarea></div>
+      <p class="err" id="revErr"></p><div class="row"><button class="btn primary" type="submit" id="revBtn">Enviar</button><button class="btn" type="button" id="revX">Cancelar</button></div></form>`);
+  document.getElementById("revX").onclick=cerrarPanel;
+  document.getElementById("fRev").onsubmit=e=>{ e.preventDefault(); const t=document.getElementById("revTxt").value.trim(); if(!t){ document.getElementById("revErr").textContent="Escribe el motivo."; return; } responderSolicitud(id,"revision",t,document.getElementById("revBtn")); };
+}
+
+/* ============ Notificaciones (campana) ============ */
+/* ============ Notificaciones: historial ============
+   Se arma con los datos (solicitudes, intercambios, observaciones), así nada desaparece:
+   pend = requiere tu acción o aún no lo viste · gestionada = ya resuelta (muestra quién y cómo).
+   "Nuevo" = llegó o cambió después de la última vez que abriste la campana (se guarda en este navegador). */
+const ICONO_NOTIF={vac:'<path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/><circle cx="12" cy="12" r="4"/>',
+  int:'<path d="M7 7h13l-4-4M17 17H4l4 4"/>', obs:'<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>', rev:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'};
+function notificaciones(){
+  if(!S.usuario) return [];
+  const yo=S.usuario.bp, out=[], sols=(S.vac&&S.vac.solicitudes)||[], nom=bp=>nombreVacDe(bp);
+  const por=(txt,quien)=>txt+(quien?` por ${quien}`:"");
+  const estVac={aprobada:"Aprobada",rechazada:"Rechazada",cancelada:"Cancelada por el instructor"};
+  if(esAdmin()){
+    if(nivelSec("vac")>=1) sols.forEach(s=>{
+      out.push({id:"v:"+s.id, k:"vac", fecha:s.at, pend:s.estado==="pendiente"&&gestiona("vac"),
+        t:`${nom(s.bp)} pidió ${plural(s.n||(s.dias||[]).length,"día")} de vacaciones`, d:`${rangoTxt(s.dias)}${s.comInst?" · con comentario":""}`,
+        est:s.estado==="pendiente"?"Por decidir":s.estado==="cancelada"?estVac.cancelada:por(estVac[s.estado]||s.estado,s.decididoPor), tono:s.estado==="aprobada"?"good":s.estado==="rechazada"?"crit":"",
+        go:()=>irANotif("vac","sol-"+s.id)});
+      if(s.motivoRev) out.push({id:"r:"+s.id, k:"rev", fecha:revisionPendiente(s)?s.respondidaAt:(s.revAtendidaAt||s.decididoAt), pend:revisionPendiente(s)&&gestiona("vac"),
+        t:`${nom(s.bp)} pidió revisión de sus vacaciones`, d:s.motivoRev, est:revisionPendiente(s)?"Por atender":"Revisión atendida", tono:"", go:()=>irANotif("vac","sol-"+s.id)});
+    });
+    if(puede("seg")) Object.values(S.resp||{}).forEach(r=>(r.obs||[]).forEach(o=>out.push({id:"o:"+o.id, k:"obs", fecha:o.at, pend:o.estado!=="resuelta"&&gestiona("seg"),
+      t:`${nom(r.bp)}: algo no calza en su rol`, d:`${mesLargo(o.mes||r.mes)}${o.dia?" · día "+o.dia:""} · ${String(o.texto||"").slice(0,80)}`,
+      est:o.estado==="resuelta"?por("Resuelta",o.resueltaPor):"Abierta", tono:o.estado==="resuelta"?"good":"",
+      go:()=>{ S.mes=o.mes||r.mes; S.segFiltro=o.estado==="resuelta"?"todos":"obs"; irANotif("seg",null); }})));
+  } else {
+    sols.filter(s=>s.bp===yo && decidida(s)).forEach(s=>out.push({id:"v:"+s.id, k:"vac", fecha:s.revAtendidaAt||s.decididoAt, pend:esperaEnterado(s),
+      t:s.revAtendidaAt?"Coordinación revisó tu solicitud de vacaciones":`Tu solicitud de vacaciones fue ${s.estado}`, d:`${rangoTxt(s.dias)}${s.comCoord?" · con comentario de coordinación":""}`,
+      est:esperaEnterado(s)?"Marca Enterado o pide revisión":s.respuesta==="enterado"?"Marcaste enterado":"Pediste revisión", tono:s.estado==="aprobada"?"good":"crit",
+      go:()=>irANotif("mi","misol-"+s.id)}));
+    Object.values(S.resp||{}).forEach(r=>(r.obs||[]).filter(o=>o.estado==="resuelta").forEach(o=>out.push({id:"o:"+o.id, k:"obs", fecha:o.resueltaAt||o.at, pend:false,
+      t:"Coordinación resolvió tu observación", d:`${mesLargo(o.mes||r.mes)}${o.dia?" · día "+o.dia:""} · ${String(o.texto||"").slice(0,80)}`, est:por("Resuelta",o.resueltaPor), tono:"good",
+      go:()=>{ S.mes=o.mes||r.mes; irANotif("mi",null); }})));
+  }
+  return out.concat(notifsIntercambio()).filter(x=>x.fecha).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).slice(0,120);
+}
+const claveNotifVisto = () => "rolins.notifVisto."+((S.usuario||{}).bp||"");
+function notifVistoHasta(){ try{ return localStorage.getItem(claveNotifVisto())||""; }catch(e){ return ""; } }
+const esNuevaNotif = (x,hasta) => hasta ? String(x.fecha)>hasta : (Date.now()-new Date(x.fecha).getTime())<3*864e5;
+function haceTxt(iso){
+  const t=new Date(iso).getTime(); if(!t) return ""; const m=Math.round((Date.now()-t)/6e4);
+  if(m<1) return "ahora"; if(m<60) return `hace ${m} min`; const h=Math.round(m/60); if(h<24) return `hace ${h} h`;
+  const d=Math.round(h/24); if(d<7) return d===1?"ayer":`hace ${d} días`; return fmtC(new Date(t));
+}
+function irANotif(tab, idEl){
+  if(S.vistas.includes(tab)) S.tab=tab;
+  render();
+  if(idEl) setTimeout(()=>{ const el=document.getElementById(idEl); if(el){ el.scrollIntoView({behavior:"smooth",block:"center"}); el.classList.add("flash"); setTimeout(()=>el.classList.remove("flash"),2200); } },60);
+}
+function campanaHTML(){
+  const L=notificaciones(), n=L.filter(x=>x.pend).length, hasta=notifVistoHasta(), nuevas=L.filter(x=>esNuevaNotif(x,hasta)).length;
+  return `<button type="button" class="bell" data-act="notifs" aria-label="Notificaciones${n?`: ${plural(n,"pendiente","pendientes")}`:""}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>${n?`<span class="bell-n num">${n>99?"99+":n}</span>`:nuevas?`<span class="bell-dot"></span>`:""}</button>`;
+}
+function abrirNotifs(){
+  const todas=notificaciones(), hasta=notifVistoHasta(), filtro=S.notifFiltro||"todas";
+  const L=filtro==="pend"?todas.filter(x=>x.pend):todas, nP=todas.filter(x=>x.pend).length;
+  const hoy=new Date(); hoy.setHours(0,0,0,0); const ayer=new Date(hoy.getTime()-864e5), semana=new Date(hoy.getTime()-6*864e5);
+  const grupo=x=>{ const f=new Date(x.fecha); return f>=hoy?"Hoy":f>=ayer?"Ayer":f>=semana?"Esta semana":"Anteriores"; };
+  const grupos=[]; L.forEach(x=>{ const g=grupo(x); let G=grupos.find(z=>z.g===g); if(!G){ G={g,l:[]}; grupos.push(G); } G.l.push(x); });
+  const fila=(x,i)=>`<button type="button" class="nt ${x.pend?"pend":"hecha"} ${esNuevaNotif(x,hasta)?"nueva":""}" data-ni="${i}">
+      <span class="nt-ic nt-k-${x.k}">${svgUI(ICONO_NOTIF[x.k]||"")}</span>
+      <span class="nt-b"><b>${esc(x.t)}</b><span class="nt-d">${esc(x.d||"")}</span>
+        <span class="nt-m">${esc(haceTxt(x.fecha))} · ${x.pend?`<span class="nt-est pend">${esc(x.est)}</span>`:`<span class="nt-est ${x.tono||""}">${x.tono==="crit"?"✕":"✓"} ${esc(x.est)}</span>`}</span></span>
+      ${esNuevaNotif(x,hasta)?`<i class="nt-dot" aria-label="Nueva"></i>`:""}</button>`;
+  let idx=0; const idxDe=new Map(); L.forEach(x=>idxDe.set(x,idx++));
+  abrirPanel("Notificaciones", nP?`${plural(nP,"pendiente","pendientes")} · ${todas.length} en total`:`Estás al día · ${todas.length} en total`,
+    `<div class="seg" role="group" aria-label="Filtro"><button aria-pressed="${filtro==="todas"}" data-nf="todas">Todas</button><button aria-pressed="${filtro==="pend"}" data-nf="pend">Pendientes${nP?` (${nP})`:""}</button></div>
+     ${L.length?grupos.map(G=>`<div class="nt-g"><span class="nt-gt">${G.g}</span>${G.l.map(x=>fila(x,idxDe.get(x))).join("")}</div>`).join("")
+       :`<p class="empty">${filtro==="pend"?"No tienes nada pendiente.":"Todavía no tienes notificaciones."}</p>`}`);
+  document.querySelectorAll("[data-ni]").forEach(b=>b.onclick=()=>{ const x=L[Number(b.dataset.ni)]; cerrarPanel(); if(x) x.go(); });
+  document.querySelectorAll("[data-nf]").forEach(b=>b.onclick=()=>{ S.notifFiltro=b.dataset.nf; cerrarPanel(); abrirNotifs(); });
+  // Al abrir, lo que llegó hasta ahora deja de ser "nuevo" (el punto se apaga la próxima vez)
+  try{ localStorage.setItem(claveNotifVisto(), new Date().toISOString()); }catch(e){}
+  pintarCabecera();
 }
 async function guardarCfg(c, btn){
   setCargando(btn,true,"Guardando…");
@@ -272,9 +635,14 @@ function wireVac(){
   document.querySelectorAll("[data-selsend]").forEach(b=>b.onclick=()=>enviarSolicitud(S.usuario.bp,b));
   document.querySelectorAll("[data-cancelsol]").forEach(b=>b.onclick=()=>cancelarSolicitud(b.dataset.cancelsol,b));
   document.querySelectorAll("[data-irsol]").forEach(b=>b.onclick=()=>{ const c=cfgVac(); const m=c.mesDesde>mesHoy()?c.mesDesde:mesHoy(); S.mes=m; S.uFiltroMes=null; render(); const el=document.getElementById("calRol"); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); });
-  document.querySelectorAll("[data-aprobar]").forEach(b=>b.onclick=()=>decidirSolicitud(b.dataset.aprobar,"aprobada",b));
-  document.querySelectorAll("[data-rechazar]").forEach(b=>b.onclick=()=>decidirSolicitud(b.dataset.rechazar,"rechazada",b));
-  const fc=$("#fCfg"); if(fc) fc.onsubmit=e=>{ e.preventDefault(); guardarCfg({habilitado:$("#cfgOn").checked, desde:$("#cfgDesde").value, hasta:$("#cfgHasta").value, mesDesde:$("#cfgMD").value||CFG_DEF.mesDesde, mesHasta:$("#cfgMH").value||CFG_DEF.mesHasta}, $("#cfgBtn")); };
+  document.querySelectorAll("[data-aprobar]").forEach(b=>b.onclick=()=>abrirDecision(b.dataset.aprobar,"aprobada"));
+  document.querySelectorAll("[data-rechazar]").forEach(b=>b.onclick=()=>abrirDecision(b.dataset.rechazar,"rechazada"));
+  document.querySelectorAll("[data-atender]").forEach(b=>b.onclick=()=>abrirAtender(b.dataset.atender));
+  document.querySelectorAll("[data-enterado]").forEach(b=>b.onclick=()=>responderSolicitud(b.dataset.enterado,"enterado","",b));
+  document.querySelectorAll("[data-revision]").forEach(b=>b.onclick=()=>abrirPedirRevision(b.dataset.revision));
+  const sc=$("#selCom"); if(sc) sc.oninput=()=>{ S.selCom=sc.value; };
+  const fc=$("#fCfg"); if(fc) fc.onsubmit=e=>{ e.preventDefault(); guardarCfg({habilitado:$("#cfgOn").checked, desde:$("#cfgDesde").value, hasta:$("#cfgHasta").value, mesDesde:$("#cfgMD").value||CFG_DEF.mesDesde, mesHasta:$("#cfgMH").value||CFG_DEF.mesHasta, cupo:$("#cfgCupo")?$("#cfgCupo").value:""}, $("#cfgBtn")); };
+  wireTableroVac();
 }
 
 window.__archivos=(window.__archivos||{}); window.__archivos["VacacionesVista"]="v2.4";

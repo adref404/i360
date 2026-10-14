@@ -138,7 +138,7 @@ function construirModelo(P){
     const M=meses[mes], nd=mesInfo(mes).dias;
     M.proc = (M.instructores||[]).map(i=>{
       const dias=(i.dias||[]).slice(0,nd); while(dias.length<nd) dias.push("");
-      const p = dias.map(t=>{ const x=parseCelda(t); x.k=catTablero(x); return x; });
+      const p = dias.map((t,k)=>{ const x=parseCelda(t); x.k=catTablero(x); x.bg=(i.bg||[])[k]||""; x.fg=(i.fg||[])[k]||""; return x; });
       const bp=String(i.bp||i.nombre);
       if(!personas[bp]) personas[bp]={bp, nombre:i.nombre, meses:{}};
       personas[bp].nombre=i.nombre; // el más reciente gana

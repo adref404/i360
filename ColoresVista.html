@@ -1,0 +1,115 @@
+<script>
+/* ColoresVista — catálogo de tipos de actividad y colores (hoja TiposActividad).
+   Editar con paleta, importar los colores que ya usa un mes, probar un texto y repintar el Google Sheet de un mes. */
+
+/* ---------- Colores del Sheet en la app (calendario y rol completo) ---------- */
+const usarColSheet = () => { try{ return localStorage.getItem("rolins.colSheet")!=="0"; }catch(e){ return true; } };
+const hexOk = c => /^#[0-9a-f]{6}$/i.test(String(c||""));
+/* Estilo en línea con el color real de la celda en el Google Sheet (las celdas blancas usan el estilo de la app) */
+const estiloSheet = x => (usarColSheet() && x && hexOk(x.bg) && x.bg.toLowerCase()!=="#ffffff") ? `style="background:${x.bg};color:${hexOk(x.fg)?x.fg:"#000"}"` : "";
+function toggleColSheetHTML(){
+  return `<label class="toggle" title="Muestra cada celda con el mismo color que tiene en el Google Sheet del mes"><input type="checkbox" data-colsheet="1" ${usarColSheet()?"checked":""}> Colores del Google Sheet</label>`;
+}
+
+/* ---------- Coincidencia (igual que el servidor) ---------- */
+const normCol = s => String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g," ").trim();
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+function clasificadorCol(tipos){
+  const reglas=tipos.filter(t=>t.activo!==false && hexOk(t.bg)).map(t=>({t, res:claveLista(t.claves).map(k=>{ const ini=k.charAt(0)==="^", c=normCol(ini?k.slice(1):k); return c?new RegExp((ini?"^":"(^|[^a-z0-9])")+escRe(c)+"($|[^a-z0-9])"):null; }).filter(Boolean)}));
+  return texto=>{ const s=normCol(texto); if(!s) return null; for(const r of reglas) if(r.res.some(re=>re.test(s))) return r.t; return null; };
+}
+const claveLista = c => (Array.isArray(c)?c:String(c||"").split(/[;\n]+/)).map(s=>String(s).trim()).filter(Boolean);
+const chipCol = (t, txt) => `<span class="colchip" style="background:${hexOk(t.bg)?t.bg:"#fff"};color:${hexOk(t.fg)?t.fg:"#000"}">${esc(txt||t.tipo||"Sin nombre")}</span>`;
+const titulo1 = s => { s=String(s||"").toLowerCase(); return s.charAt(0).toUpperCase()+s.slice(1); };
+
+/* ---------- Carga ---------- */
+async function cargarTipos(){
+  if(S.tiposCargando) return; S.tiposCargando=true;
+  try{ const r=await api("apiTipos",S.token); S.tipos=r; S.tiposEdit=r.tipos.map(t=>({...t, claves:t.claves.join("\n")})); S.colMes=S.colMes||r.meses[0]||""; S.tiposSucio=false; }
+  catch(e){ S.tipos={error:e.message}; }
+  S.tiposCargando=false; if(S.tab==="colores") render();
+}
+
+/* ---------- Vista ---------- */
+function admColores(){
+  if(!S.tipos){ cargarTipos(); return `<div class="loading" style="min-height:30vh"><span class="spin"></span><span>Leyendo el catálogo…</span></div>`; }
+  if(S.tipos.error) return `<div class="card empty-state"><h3>No pudimos leer el catálogo</h3><p class="hint">${esc(S.tipos.error)}</p><button class="btn" data-colrecargar="1">Reintentar</button></div>`;
+  const T=S.tiposEdit, meses=S.tipos.meses;
+  const filas=T.map((t,i)=>`<div class="tipo-r" data-ti="${i}">
+      <div class="tipo-ord"><button class="btn sm" data-colmov="${i}" data-d="-1" ${i===0?"disabled":""} aria-label="Subir">↑</button><button class="btn sm" data-colmov="${i}" data-d="1" ${i===T.length-1?"disabled":""} aria-label="Bajar">↓</button></div>
+      <div class="tipo-col"><label class="hint">Fondo</label><input type="color" data-f="bg" value="${hexOk(t.bg)?t.bg:"#ffffff"}"><label class="hint">Texto</label><input type="color" data-f="fg" value="${hexOk(t.fg)?t.fg:"#000000"}"></div>
+      <div class="tipo-main"><input class="input" data-f="tipo" value="${esc(t.tipo)}" placeholder="Nombre del tipo (ej.: Inicial G5)"><textarea class="input" data-f="claves" rows="2" placeholder="Palabras clave, una por línea (ej.: INICIAL G5)">${esc(t.claves)}</textarea></div>
+      <div class="tipo-prev"><span class="tipo-chip">${chipCol(t)}</span><label class="row" style="gap:6px"><input type="checkbox" data-f="activo" ${t.activo!==false?"checked":""}> Activo</label><button class="btn sm" data-colborrar="${i}">Quitar</button></div>
+    </div>`).join("");
+  const imp=S.colImport, vis=S.colVista;
+  const selMes=id=>`<select class="input" id="${id}" style="max-width:220px">${meses.map(m=>`<option value="${m}" ${m===S.colMes?"selected":""}>${mesLargo(m)}</option>`).join("")}</select>`;
+  return `<div class="stack">
+    <div class="card stack" style="gap:12px">
+      <div class="row between"><div><h3>Catálogo de tipos de actividad</h3><p class="hint">Cada tipo tiene palabras clave y un color. Una celda es de un tipo si su texto contiene alguna clave como palabra completa (sin importar mayúsculas ni tildes); con <b>^</b> al inicio, la clave debe estar al comienzo de la celda. Gana el primer tipo de la lista: pon arriba lo más específico (por ejemplo “RESERVA IET TARDE” antes que “RESERVA IET”).</p></div>
+        <div class="row"><button class="btn" data-coladd="1">Agregar tipo</button><button class="btn primary" data-colguardar="1" ${S.tiposSucio?"":"disabled"}>Guardar catálogo</button></div></div>
+      ${T.length?`<div class="tipos">${filas}</div>`:`<div class="note">El catálogo está vacío. Agrega tipos o, más rápido, usa “Importar colores de un mes” para partir de los colores que ya usa coordinación.</div>`}
+      <div class="tipo-test"><label for="colTest" class="hint">Probar un texto de celda</label><input class="input" id="colTest" placeholder="Ej.: LCK B767 - LIM-MIA - LA 2480" value="${esc(S.colTest||"")}"><div id="colTestRes">${resultadoPrueba()}</div></div>
+    </div>
+    <div class="grid2e" style="align-items:start">
+      <div class="card stack" style="gap:10px">
+        <div><h3>Importar colores de un mes</h3><p class="hint">Lee el Google Sheet del mes y agrupa las celdas por color, con los textos más comunes de cada uno. Agrega los que quieras al catálogo y ajusta sus palabras clave.</p></div>
+        ${meses.length?`<div class="row">${selMes("colMesImp")}<button class="btn" data-colimport="1">Leer colores</button></div>`:`<p class="empty">No hay meses con Google Sheet conectado.</p>`}
+        ${imp&&imp.error?`<div class="msg err">${esc(imp.error)}</div>`:""}
+        ${imp&&imp.grupos?`<div class="obs">${imp.grupos.map((g,i)=>`<div class="obs-item"><div class="h">${chipCol({bg:g.bg,fg:g.fg},titulo1(g.textos[0]?g.textos[0].texto:"")||g.bg)}<span class="hint">${g.celdas} celdas · ${esc(g.bg)}</span></div>
+          <span class="hint">${g.textos.map(x=>`${esc(x.texto)} (${x.n})`).join(" · ")}</span>
+          <div><button class="btn sm" data-colusar="${i}">Agregar como tipo</button></div></div>`).join("")}</div>`:""}
+      </div>
+      <div class="card stack" style="gap:10px">
+        <div><h3>Repintar el Google Sheet de un mes</h3><p class="hint">Pinta cada celda con el color de su tipo. Primero ves qué cambiaría; las celdas sin tipo no se tocan. Los intercambios aprobados ya se pintan solos con este catálogo.</p></div>
+        ${meses.length?`<div class="row">${selMes("colMesRep")}<button class="btn" data-colvista="1" ${S.tiposSucio?"disabled title=\"Guarda el catálogo primero\"":""}>Ver qué cambiaría</button></div>`:`<p class="empty">No hay meses con Google Sheet conectado.</p>`}
+        ${vis&&vis.error?`<div class="msg err">${esc(vis.error)}</div>`:""}
+        ${vis&&!vis.error?`<div class="stack" style="gap:8px">
+          <div class="kpis k4"><div class="kpi"><span class="l">Celdas con texto</span><span class="v num">${vis.celdas}</span></div><div class="kpi"><span class="l">Ya coinciden</span><span class="v num">${vis.coinciden}</span></div><div class="kpi"><span class="l">Cambiarían</span><span class="v num">${vis.cambios}</span></div><div class="kpi"><span class="l">Sin tipo</span><span class="v num">${vis.sinTipo.reduce((a,x)=>a+x.n,0)}</span></div></div>
+          ${vis.muestra.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Instructor</th><th>Día</th><th>Texto</th><th>Antes → después</th></tr></thead><tbody>${vis.muestra.map(x=>`<tr><td>${esc(x.nombre)}</td><td class="num">${x.dia}</td><td>${esc(x.texto)}<span class="sm2">${esc(x.tipo)}</span></td><td><span class="sw" style="background:${hexOk(x.antes)?x.antes:"#fff"};box-shadow:inset 0 0 0 1px var(--line-2)"></span> → <span class="sw" style="background:${x.despues}"></span></td></tr>`).join("")}</tbody></table></div>${vis.cambios>vis.muestra.length?`<p class="hint">Y ${vis.cambios-vis.muestra.length} celdas más.</p>`:""}`:""}
+          ${vis.sinTipo.length?`<details><summary class="hint" style="cursor:pointer">Textos sin tipo (${vis.sinTipo.length}): agrégalos al catálogo para pintarlos</summary><p class="hint" style="margin-top:6px">${vis.sinTipo.map(x=>`${esc(x.texto)} (${x.n})`).join(" · ")}</p></details>`:""}
+          ${vis.cambios?`<div class="row"><button class="btn primary" data-colrepintar="${esc(vis.mes)}">Repintar ${vis.cambios} celdas de ${esc(mesLargo(vis.mes))}</button></div>`:`<div class="msg ok">Todas las celdas con tipo ya tienen el color del catálogo.</div>`}
+        </div>`:""}
+      </div>
+    </div>
+  </div>`;
+}
+function resultadoPrueba(){
+  const t=String(S.colTest||"").trim(); if(!t) return "";
+  const m=clasificadorCol(S.tiposEdit||[])(t);
+  return m?`<p class="hint" style="margin-top:6px">Tipo: ${chipCol(m)}</p>`:`<p class="hint" style="margin-top:6px">Ningún tipo coincide: la celda quedaría con su color actual.</p>`;
+}
+
+/* ---------- Eventos ---------- */
+function wireColores(){
+  document.querySelectorAll("[data-colsheet]").forEach(c=>c.onchange=()=>{ try{ localStorage.setItem("rolins.colSheet",c.checked?"1":"0"); }catch(e){} render(); });
+  if(S.tab!=="colores") return;
+  const sucio=()=>{ S.tiposSucio=true; const g=document.querySelector("[data-colguardar]"); if(g) g.disabled=false; };
+  document.querySelectorAll(".tipo-r").forEach(row=>{ const t=S.tiposEdit[Number(row.dataset.ti)];
+    row.querySelectorAll("[data-f]").forEach(inp=>{ const f=inp.dataset.f;
+      inp.oninput=inp.onchange=()=>{ t[f]= f==="activo" ? inp.checked : inp.value; sucio();
+        if(f==="bg"||f==="fg"||f==="tipo"){ const ch=row.querySelector(".tipo-chip"); if(ch) ch.innerHTML=chipCol(t); }
+        const r=document.getElementById("colTestRes"); if(r) r.innerHTML=resultadoPrueba(); }; }); });
+  document.querySelectorAll("[data-colmov]").forEach(b=>b.onclick=()=>{ const i=Number(b.dataset.colmov), j=i+Number(b.dataset.d); const T=S.tiposEdit; [T[i],T[j]]=[T[j],T[i]]; S.tiposSucio=true; render(); });
+  document.querySelectorAll("[data-colborrar]").forEach(b=>b.onclick=()=>{ S.tiposEdit.splice(Number(b.dataset.colborrar),1); S.tiposSucio=true; render(); });
+  document.querySelectorAll("[data-coladd]").forEach(b=>b.onclick=()=>{ S.tiposEdit.unshift({tipo:"",claves:"",bg:"#cfe2ff",fg:"#000000",activo:true}); S.tiposSucio=true; render(); });
+  document.querySelectorAll("[data-colrecargar]").forEach(b=>b.onclick=()=>{ S.tipos=null; render(); });
+  const te=$("#colTest"); if(te) te.oninput=()=>{ S.colTest=te.value; const r=document.getElementById("colTestRes"); if(r) r.innerHTML=resultadoPrueba(); };
+  ["colMesImp","colMesRep"].forEach(id=>{ const s=$("#"+id); if(s) s.onchange=()=>{ S.colMes=s.value; }; });
+  document.querySelectorAll("[data-colguardar]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Guardando…");
+    try{ const r=await api("apiGuardarTipos",S.token,S.tiposEdit.map(t=>({tipo:t.tipo,claves:claveLista(t.claves),bg:t.bg,fg:t.fg,activo:t.activo!==false,notas:t.notas||""})));
+      S.tipos.tipos=r; S.tiposEdit=r.map(t=>({...t,claves:t.claves.join("\n")})); S.tiposSucio=false; S.colVista=null; toast("Catálogo guardado"); render(); }
+    catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-colimport]").forEach(b=>b.onclick=async()=>{ const mes=$("#colMesImp").value; S.colMes=mes; setCargando(b,true,"Leyendo el Sheet…");
+    try{ S.colImport={grupos:await api("apiImportarColores",S.token,mes)}; }catch(e){ S.colImport={error:e.message}; } render(); });
+  document.querySelectorAll("[data-colusar]").forEach(b=>b.onclick=()=>{ const g=S.colImport.grupos[Number(b.dataset.colusar)];
+    S.tiposEdit.push({tipo:titulo1(g.textos[0]?g.textos[0].texto:"Nuevo tipo"),claves:g.textos.slice(0,3).map(x=>x.texto).join("\n"),bg:g.bg,fg:g.fg,activo:true});
+    S.tiposSucio=true; toast("Agregado al final del catálogo: revisa sus palabras clave y guarda"); render(); });
+  document.querySelectorAll("[data-colvista]").forEach(b=>b.onclick=async()=>{ const mes=$("#colMesRep").value; S.colMes=mes; setCargando(b,true,"Comparando…");
+    try{ S.colVista=await api("apiVistaRepintar",S.token,mes); }catch(e){ S.colVista={error:e.message}; } render(); });
+  document.querySelectorAll("[data-colrepintar]").forEach(b=>b.onclick=async()=>{ if(!confirm("Se cambiarán los colores en el Google Sheet de coordinación. ¿Continuar?")) return; setCargando(b,true,"Repintando…");
+    try{ const r=await api("apiRepintarMes",S.token,b.dataset.colrepintar); toast(`${r.cambios} celdas repintadas en ${mesLargo(r.mes)}`); S.colVista=null; await recargar(); render(); }
+    catch(e){ setCargando(b,false); toast(e.message); } });
+}
+
+window.__archivos=(window.__archivos||{}); window.__archivos["ColoresVista"]="v2.4";
+</script>

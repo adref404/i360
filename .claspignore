@@ -1,0 +1,9 @@
+# Archivos que no se suben a Apps Script (clasp push)
+**/*.otf
+**/*.ttf
+**/*.woff
+**/*.woff2
+**/*.xlsx
+fuentes/**
+.git/**
+**/node_modules/**

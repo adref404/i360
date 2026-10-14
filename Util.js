@@ -22,6 +22,34 @@ function hoja_(nombre, encabezados) {
   return sh;
 }
 
+/** Color de Sheets ("#FFF", "#ffffff", "white"…) → "#rrggbb" en minúsculas, o "" si no es válido. */
+function colorHex_(c) {
+  let s = String(c || '').trim().toLowerCase();
+  if (s === 'white') return '#ffffff';
+  if (s === 'black') return '#000000';
+  if (/^#[0-9a-f]{3}$/.test(s)) s = '#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3];
+  return /^#[0-9a-f]{6}$/.test(s) ? s : '';
+}
+
+/** Agrega al final de la fila 1 los encabezados que falten (no mueve columnas existentes). */
+function asegurarColumnas_(sh, nombres) {
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const head = sh.getRange(1, 1, 1, lc).getValues()[0].map(normTxt_);
+  const faltan = nombres.filter(h => head.indexOf(normTxt_(h)) < 0);
+  if (faltan.length) sh.getRange(1, lc + 1, 1, faltan.length).setValues([faltan]);
+  return sh;
+}
+
+/** Escribe en una fila los valores indicados por nombre de encabezado. */
+function escribirFila_(sh, fila, valores) {
+  const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(normTxt_);
+  Object.keys(valores).forEach(nombre => {
+    const i = head.indexOf(normTxt_(nombre));
+    if (i < 0) throw new Error('Falta la columna "' + nombre + '" en la hoja ' + sh.getName());
+    sh.getRange(fila, i + 1).setValue(valores[nombre]);
+  });
+}
+
 /** Lee una hoja completa: encabezados normalizados y filas de valores. */
 function filas_(sh) {
   if (!sh) return { head: [], rows: [] };
@@ -84,6 +112,25 @@ function conBloqueo_(fn) {
   const l = LockService.getScriptLock();
   l.waitLock(20000);
   try { return fn(); } finally { l.releaseLock(); }
+}
+
+/** Otro usuario ya resolvió lo que se intenta hacer (la pantalla estaba desactualizada). */
+function yaResuelto_(que, accion, quien, cuando) {
+  let f = '';
+  try { if (cuando) f = Utilities.formatDate(new Date(cuando), CONFIG.zona, "dd/MM 'a las' HH:mm"); } catch (e) { /* sin fecha */ }
+  return falla_(que + ' ya fue ' + accion + (quien ? ' por ' + quien : '') + (f ? ' el ' + f : '') + '. Tu pantalla no estaba actualizada: ya la recargamos.', 'YA_RESUELTO');
+}
+
+/** Dirección de la app para los correos: CONFIG.appUrl o, si falta, la del despliegue actual. */
+function urlApp_() {
+  if (CONFIG.appUrl) return CONFIG.appUrl;
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+/** Botón "Abrir INS 360" para el cuerpo HTML de los correos. */
+function botonAppHtml_(texto) {
+  const u = urlApp_(); if (!u) return '';
+  return '<p style="margin:22px 0"><a href="' + u + '" style="background:#1B0088;color:#ffffff;text-decoration:none;font-weight:bold;padding:11px 20px;border-radius:8px;display:inline-block">' +
+    (texto || 'Abrir ' + CONFIG.nombreApp) + '</a></p>';
 }
 
 /** Error que sí se muestra al usuario. */

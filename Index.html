@@ -5,30 +5,49 @@
   <meta charset="utf-8">
   <meta name="rol-version" content="Index v2.4">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Rol de instructores LP</title>
+  <title>INS 360 LP</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;0,900;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <script>
+    /* Tema elegido por el usuario (Sistema, Claro u Oscuro). Va antes de los estilos para no parpadear. */
+    (function(){ try{ var t=localStorage.getItem('rolins.tema'); if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
+  </script>
   <?!= include('Estilos'); ?>
+  <?!= include('FuentesLatam'); ?>
 </head>
-<body>
+<body class="iniciando">
 <header class="top">
   <div class="top-in">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg></div>
-      <div><b>Rol de instructores LP</b><small id="topMes">Instructores LP</small></div>
+      <?!= logoBarra ?>
+      <div><b>INS 360 LP</b><small id="topMes">Instructores LP</small></div>
     </div>
     <div class="sp"></div>
     <div class="who" id="who"></div>
   </div>
 </header>
-<main id="app"><div class="loading"><span class="spin"></span><span>Cargando…</span><small class="hint">Versión <?= version ?></small></div></main>
+<main id="app"><div class="splash" role="status" aria-live="polite">
+  <? if (fondo) { ?><img class="splash-bg" src="<?= fondo ?>" alt="" onload="this.parentNode.classList.add('con-fondo')" onerror="this.remove()"><? } ?>
+  <div class="splash-c">
+    <?!= logoCarga ?>
+    <h1 class="splash-n"><?= nombreApp ?></h1>
+    <p class="splash-s">Gestión de instructores LP</p>
+    <div class="splash-bar" aria-hidden="true"><i></i></div>
+    <p class="splash-m">Iniciando…</p>
+  </div>
+  <p class="splash-v">Versión <?= version ?></p>
+</div></main>
 <div class="tip" id="tip" hidden></div>
 <script>
 /* Vigilante de arranque: si algo impide iniciar, muestra la causa en lugar de "Cargando…" para siempre.
    Va ANTES de los demás archivos para capturar también errores de sintaxis con su línea. */
 (function(){
   var VERSION = '<?= version ?>';
+  window.LOGOS = <?!= logos ?>;
+  window.NOMBRE_APP = '<?= nombreApp ?>';
+  window.FONDO_INICIO = '<?= fondo ?>';
+  window.VERSION_APP = VERSION;
   window.__archivos = {};
   function e(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   function falla(titulo, detalle){
@@ -60,13 +79,15 @@
 <?!= include('Clasificador'); ?>
 <?!= include('App'); ?>
 <?!= include('VacacionesVista'); ?>
+<?!= include('IntercambiosVista'); ?>
+<?!= include('ColoresVista'); ?>
 <?!= include('Vistas'); ?>
 <?!= include('Coordinacion'); ?>
 <?!= include('Admin'); ?>
 <script>
 (function(){
   window.__cargando = false;
-  var faltan = ['Clasificador', 'App', 'VacacionesVista', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
+  var faltan = ['Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
   var tecnico = window.__errorCarga ? '\n\nDetalle técnico: ' + window.__errorCarga : '';
   if (faltan.length) {
     window.__fallaArranque('Archivo incompleto o con error: ' + faltan.join(', '),

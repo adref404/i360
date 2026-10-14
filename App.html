@@ -43,14 +43,14 @@ const TODAS = ["VIN","AUD","IET","RES","VHA","GES","BLA","VAC","DM","LIC","CUM",
 const sw = k => `<i class="sw ${k==="DO"?"do":""}" style="background:${KC[k].color}${k==="SIN"||k==="BLA"?";box-shadow:inset 0 0 0 1px var(--line-2)":""}"></i>`;
 const ICON_PLANE = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>`;
 
-const TAB_NOMBRE = {ind:"Indicadores", seg:"Seguimiento del mes", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", vac:"Vacaciones", cargar:"Actualizar rol", usuarios:"Usuarios y accesos", mi:"Mi rol"};
+const TAB_NOMBRE = {ind:"Indicadores", seg:"Seguimiento del mes", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", vac:"Vacaciones", int:"Intercambios", cargar:"Actualizar rol", colores:"Tipos y colores", usuarios:"Usuarios y accesos", mi:"Mi rol"};
 
 /* ============ Estado ============ */
 const S = {
   token:null, usuario:null, vistas:[], equipo:false, hoy:null, baseUrl:"",
   resp:{}, mes:null, modo:"anio", vVuelo:"tasa", distModo:"pct",
   tab:null, uFiltroMes:null, uTipo:"todos", dia:null, filtro:null, busca:"", verBp:null, segFiltro:"pend",
-  xlsxPrev:null, vac:null, selVac:new Set(), fuentes:null, fuentesMsg:"", fuentesCargando:false, adm:null, admCargando:false, buscaU:"", filtroU:"todos",
+  xlsxPrev:null, vac:null, selVac:new Set(), vacSim:[], vacAnio:null, selCom:"", intercambios:[], notifFiltro:"todas", tipos:null, tiposEdit:[], tiposSucio:false, colImport:null, colVista:null, colMes:"", colTest:"", fuentes:null, fuentesMsg:"", fuentesCargando:false, adm:null, admCargando:false, buscaU:"", filtroU:"todos",
   login:{modo:"login", usuario:"", err:"", ok:"", google:""}, listo:false
 };
 let MO = construirModelo({meses:[]});
@@ -65,6 +65,10 @@ const esEditable = mes => !!mes && mes >= mesHoy();
 const respDe = (bp,mes=S.mes) => S.resp[mes+"_"+bp] || null;
 const puede = v => S.vistas.includes(v);
 const esAdmin = () => S.usuario && S.usuario.rol==="admin";
+/* Nivel del perfil de acceso en una sección: 0 sin acceso · 1 ver · 2 gestionar (el servidor también lo valida) */
+const nivelSec = k => !esAdmin() ? 0 : (S.usuario.niveles ? (S.usuario.niveles[k]||0) : 2);
+const gestiona = k => nivelSec(k) >= 2;
+const SECC_CON_ACCIONES = ["seg","vac","int","cargar","colores","usuarios"];
 
 /* Registro de acciones de detalle (drill-down) por render */
 let DR = {}; let drn=0;
@@ -96,6 +100,7 @@ function api(fn, ...args){
         if(r==null || typeof r!=="object" || !("ok" in r)){ const e=new Error("El servidor respondió algo inesperado al llamar a "+fn+". ¿Quedó el Server.gs antiguo o la implementación no tiene la versión nueva?"); e.codigo="FORMATO"; return no(e); }
         const e=new Error((r&&r.error)||"No se pudo completar la acción."); e.codigo=r&&r.codigo;
         if(e.codigo==="SESION" && S.usuario){ sesionTerminada(e.message); }
+        if(e.codigo==="YA_RESUELTO" && S.usuario){ yaResueltoAviso(e.message); }
         no(e);
       })
       .withFailureHandler(err=>{ const det=err&&err.message?err.message:String(err||""); console.error("Apps Script",fn,err);
@@ -127,12 +132,13 @@ async function arrancar(){
 }
 async function cargarDatos(mantener){
   window.__appIniciada=true;
-  if(!S.listo){ $("#app").innerHTML=`<div class="loading"><span class="spin"></span><span>Cargando tu información…</span></div>`; pintarCabecera(); }
+  if(!S.listo){ document.body.classList.add("iniciando"); $("#app").innerHTML=splashHTML("Cargando tu información…"); pintarCabecera(); }
   try{
     const P=await api("apiDatos", S.token);
     aplicarDatos(P, mantener);
   }catch(e){
     if(e.codigo==="SESION") return;
+    document.body.classList.remove("iniciando");
     $("#app").innerHTML=`<div class="card empty-state" style="margin-top:30px"><h2>No pudimos cargar el rol</h2><p class="hint">${esc(e.message)}</p><button class="btn primary" id="reintentar">Reintentar</button></div>`;
     const b=$("#reintentar"); if(b) b.onclick=()=>cargarDatos(mantener);
   }
@@ -141,6 +147,7 @@ function aplicarDatos(P, mantener){
   S.usuario=P.usuario; S.vistas=P.usuario.vistas||[]; S.equipo=!!P.usuario.equipo; S.hoy=P.hoy; S.baseUrl=P.baseUrl||"";
   S.resp=P.respuestas||{};
   S.vac=P.vac||{personas:{}, solicitudes:[], cfg:null, ventanaUltima:null, fuente:""}; resetVac();
+  S.intercambios=P.intercambios||[]; S.intAprob=P.intAprob||null;
   const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
   MO=construirModelo(P); STC={};
   if(!mantener || !MO.orden.includes(S.mes)) S.mes=mesInicial();
@@ -160,13 +167,19 @@ async function recargar(){ STC={}; await cargarDatos(true); }
 /* ============ Render raíz ============ */
 function pintarCabecera(){
   const top=$("#topMes"), who=$("#who");
+  const conMenu = !!(S.usuario && S.listo && !(S.vistas.length===1 && S.vistas[0]==="mi"));
+  let nt=$("#navToggle");
+  if(conMenu && !nt){ nt=document.createElement("button"); nt.id="navToggle"; nt.type="button"; nt.className="nav-toggle"; nt.setAttribute("aria-label","Menú");
+    nt.innerHTML=svgUI(ICONO_UI.menu); nt.onclick=alternarMenu; document.querySelector(".top-in").prepend(nt); }
+  if(nt) nt.hidden=!conMenu;
   if(!S.usuario){ top.textContent="Instructores LP"; who.innerHTML=""; return; }
   const mT = S.mes && MO.orden.includes(S.mes) ? S.mes : mesInicial();
   if(mT) top.textContent = S.equipo ? `Freeze ${mesLargo(mT)} · ${rosterMes(mT).length} instructores` : `Freeze ${mesLargo(mT)}`;
   else top.textContent="Instructores LP";
   const u=S.usuario, ini=(u.nombre||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
-  who.innerHTML=`<details class="menu" id="menuCuenta"><summary aria-label="Tu cuenta"><span class="avatar">${esc(ini)}</span><span class="lbl" style="font-weight:600;color:var(--ink)">${esc(u.nombre)}</span><span class="pill ${u.rol==="admin"?"acc":"info"} lbl" style="padding:1px 8px">${esc(u.rolTxt)}</span></summary>
-    <div class="menu-pop" role="menu"><div class="mh"><b>${esc(u.nombre)}</b><span class="hint mono">BP ${esc(u.bp)}</span>${u.correo?`<span class="hint">${esc(u.correo)}</span>`:""}<span class="hint">${esc(u.rolTxt)}</span></div>
+  who.innerHTML=`${S.listo?campanaHTML():""}<details class="menu" id="menuCuenta"><summary aria-label="Tu cuenta"><span class="avatar">${esc(ini)}${u.foto?`<img src="${esc(u.foto)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`:""}</span><span class="lbl" style="font-weight:600;color:var(--ink)">${esc(u.nombre)}</span><span class="pill ${u.rol==="admin"?"acc":"info"} lbl" style="padding:1px 8px">${esc(u.rolTxt)}</span></summary>
+    <div class="menu-pop" role="menu"><div class="mh"><b>${esc(u.nombre)}</b><span class="hint mono">BP ${esc(u.bp)}</span>${u.cargo||u.area?`<span class="hint">${esc([u.cargo,u.area].filter(Boolean).join(" · "))}</span>`:""}${u.correo?`<span class="hint">${esc(u.correo)}</span>`:""}<span class="hint">${esc(u.rolTxt)}</span></div>
+      <button type="button" data-act="preferencias" role="menuitem">Preferencias</button>
       <button type="button" data-act="cambiarClave" role="menuitem">Cambiar contraseña</button>
       <button type="button" data-act="salir" class="danger" role="menuitem">Cerrar sesión</button></div></details>`;
 }
@@ -179,6 +192,10 @@ function render(){
   if(!S.usuario) app.innerHTML=vistaLogin();
   else if(!S.listo) return;
   else app.innerHTML=vistaShell();
+  document.body.classList.toggle("con-side", !!app.querySelector(".shell"));
+  document.body.classList.remove("iniciando");
+  document.body.classList.toggle("sin-sesion", !S.usuario);
+  if(!document.body.dataset.menuIni && app.querySelector(".shell")){ document.body.classList.toggle("side-mini", miniGuardado()); document.body.dataset.menuIni="1"; }
   wire();
 }
 /* Meses navegables: en Mi rol y Por instructor, todos los meses (para ver vacaciones aunque no haya rol); en el resto, solo los meses con rol */
@@ -188,7 +205,7 @@ function mesNav(lista){
   lista = lista || MO.orden;
   const i=lista.indexOf(S.mes), h=mesHoy(), conRol=lista!==MO.orden;
   return `<div class="mesnav" role="group" aria-label="Mes"><button data-messtep="-1" ${i<=0?"disabled":""} aria-label="Mes anterior">‹</button>
-    <select id="selMes" aria-label="Elegir mes">${lista.map(m=>`<option value="${m}" ${m===S.mes?"selected":""}>${mesLargo(m)}${m===h?" · en curso":(!conRol&&m>h)?" · próximo":""}</option>`).join("")}</select>
+    <select id="selMes" aria-label="Elegir mes">${lista.map(m=>`<option value="${m}" ${m===S.mes?"selected":""}>${mesLargo(m)}${m===h?" · en curso":(!conRol&&m>h)?" · próximo":""}${MO.meses[m]&&MO.meses[m].oculto?" · oculto a instructores":""}</option>`).join("")}</select>
     <button data-messtep="1" ${i>=lista.length-1?"disabled":""} aria-label="Mes siguiente">›</button></div>`;
 }
 function irAMes(m){ if(!listaMesesActual().includes(m)) return; S.mes=m; S.uFiltroMes=null; S.dia=null; render(); }
@@ -238,11 +255,10 @@ function vistaLogin(){
     <button class="btn ghost" type="button" data-lmodo="login">← Volver a iniciar sesión</button>`;
   return `<section class="auth"><div class="auth-card">
     <div class="auth-side">
-      <div class="brand-mark" aria-hidden="true">${ICON_PLANE}</div>
-      <div><span class="eyebrow">Instructores LP · Freeze</span><h1>Rol de instructores</h1></div>
-      <p>Cada instructor ve su rol, sus vuelos y sus vacaciones. Coordinación ve el rol completo, los indicadores de equidad y las alertas.</p>
-      <ul class="feat"><li><i>1</i><span>Tu rol del mes, día por día, con el detalle de cada vuelo.</span></li><li><i>2</i><span>Confirma tu rol o avisa si algo no calza.</span></li><li><i>3</i><span>Vacaciones, viáticos y actividades del año.</span></li></ul>
-      <p class="small">Acceso solo para personas registradas y activas en la hoja Usuarios. Tu contraseña es personal: coordinación no puede verla.</p>
+      ${window.FONDO_INICIO?`<img class="auth-bg" src="${esc(window.FONDO_INICIO)}" alt="" onload="this.parentNode.classList.add('con-fondo')" onerror="this.remove()">`:""}
+      ${logoHTML('completo','oscuro')}
+      <div class="auth-hero"><h1>${esc(window.NOMBRE_APP||"INS 360")}</h1><p>Gestión de instructores LP</p></div>
+      <p class="small">LATAM Airlines · Uso interno${window.VERSION_APP?` · v${esc(window.VERSION_APP)}`:""}</p>
       <div class="runway" aria-hidden="true"></div>
     </div>
     <div class="auth-main">${form}</div>
@@ -293,6 +309,31 @@ function entrar(r){
   S.login={modo:"login", usuario:"", err:"", ok:"", google:S.login.google};
   S.tab=null; S.fuentes=null; S.adm=null; S.verBp=null; S.xlsxPrev=null; S.selVac.clear();
   cargarDatos(false); scrollTo(0,0);
+}
+/* Otro usuario resolvió lo mismo antes: se avisa, se cierran los diálogos y se recargan los datos */
+let avisoConflicto=false;
+function yaResueltoAviso(msg){
+  if(avisoConflicto) return; avisoConflicto=true;
+  document.querySelectorAll(".scrim").forEach(x=>x.remove());
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet confirm" role="alertdialog" aria-modal="true" aria-labelledby="yrT"><span class="confirm-ic info" aria-hidden="true">${svgUI('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>')}</span>
+    <h2 id="yrT">Ya se resolvió</h2><p class="hint">${esc(msg)}</p><div class="row confirm-acts"><button class="btn primary" type="button" id="yrOk">Entendido</button></div></div>`;
+  document.body.appendChild(sc);
+  const ok=()=>{ sc.remove(); avisoConflicto=false; };
+  $("#yrOk",sc).onclick=ok; sc.addEventListener("click",e=>{ if(e.target===sc) ok(); });
+  S.fuentes=null; S.adm=null; recargar().catch(()=>{});
+}
+function confirmarSalir(){
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet confirm" role="alertdialog" aria-modal="true" aria-labelledby="csT" aria-describedby="csD">
+    <span class="confirm-ic" aria-hidden="true">${svgUI(ICONO_UI.salir)}</span>
+    <h2 id="csT">¿Cerrar sesión?</h2><p class="hint" id="csD">Tendrás que ingresar de nuevo con tu usuario y contraseña${S.usuario&&S.usuario.nombre?`, ${esc(S.usuario.nombre.split(" ")[0])}`:""}.</p>
+    <div class="row confirm-acts"><button class="btn" type="button" id="csNo">Cancelar</button><button class="btn danger" type="button" id="csSi">Cerrar sesión</button></div></div>`;
+  document.body.appendChild(sc);
+  const close=()=>{ sc.remove(); document.removeEventListener("keydown",k); }; const k=e=>{ if(e.key==="Escape") close(); };
+  document.addEventListener("keydown",k); sc.addEventListener("click",e=>{ if(e.target===sc) close(); });
+  $("#csNo",sc).onclick=close; $("#csSi",sc).onclick=()=>{ close(); salir(); };
+  setTimeout(()=>$("#csNo",sc).focus(),30);
 }
 async function salir(){
   const t=S.token;
@@ -348,12 +389,107 @@ function vistaShell(){
   else if(S.tab==="cargar") body=admCargar();
   else if(S.tab==="usuarios") body=admUsuarios();
   else if(S.tab==="vac") body=admVac();
+  else if(S.tab==="int") body=admIntercambios();
+  else if(S.tab==="colores") body=admColores();
   else if(S.tab==="mi") body=vistaUsuario(S.usuario.bp,false);
   const titulo = S.tab==="ind"?"Indicadores del Freeze" : conMes? `Rol de ${mesInfo(S.mes).nombre} ${mesInfo(S.mes).y}` : TAB_NOMBRE[S.tab];
   const encabezado = ["inst","mi"].includes(S.tab) ? "" :
     `<div class="pagehead"><div><span class="eyebrow">${esAdmin()?"Panel de coordinación · Instructores LP":"Instructores LP"}</span><h1>${esc(titulo)}</h1></div>${conMes&&!sinDatos?mesNav():""}</div>`;
-  return `${encabezado}<div class="tabs" role="tablist">${tabs.map(k=>`<button class="tab" role="tab" aria-selected="${S.tab===k}" data-atab="${k}">${TAB_NOMBRE[k]}</button>`).join("")}</div>${body}`;
+  const ro = esAdmin() && SECC_CON_ACCIONES.includes(S.tab) && !gestiona(S.tab);
+  const aviso = ro ? `<div class="ro-aviso" role="note">${svgUI('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>')}<span><b>Solo lectura.</b> Tu perfil (${esc(S.usuario.perfil||"")}) permite ver esta sección, pero no aprobar ni editar.</span></div>` : "";
+  return `<div class="shell">${barraLateral(tabs)}<div class="shell-main${ro?" ro":""}">${encabezado}${aviso}${body}</div></div>`;
 }
+
+/* ============ Barra lateral (coordinación) ============ */
+const GRUPOS_NAV = [["Rol del mes",["ind","seg","rol","dia","inst","mi"]],["Gestión",["vac","int"]],["Administración",["cargar","colores","usuarios"]]];
+const ICONO_NAV = {
+  ind:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', seg:'<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
+  rol:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>', dia:'<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15 20a5 5 0 0 1 6-4.6"/>',
+  inst:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', mi:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  vac:'<path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/><circle cx="12" cy="12" r="4"/>',
+  int:'<path d="M7 7h13l-4-4M17 17H4l4 4"/>', cargar:'<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  usuarios:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  colores:'<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1.2-1.8-.5-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10.5" cy="7" r="1.2"/><circle cx="15" cy="7.5" r="1.2"/>'
+};
+/* Pendientes por sección (mismo criterio que la campana) */
+function pendientesNav(k){
+  if(!gestiona(k) && k!=="int") return 0;
+  try{
+    if(k==="vac"){ const s=(S.vac&&S.vac.solicitudes)||[]; return s.filter(x=>x.estado==="pendiente").length+s.filter(revisionPendiente).length; }
+    if(k==="int"){ const A=intAprob(); return intercambios().filter(x=>(x.estado==="en_supervisor"&&A.soyRevisor)||(x.estado==="en_jefe"&&A.soyFinal)).length; }
+    if(k==="seg") return Object.values(S.resp||{}).reduce((a,r)=>a+(r.obs||[]).filter(o=>o.estado!=="resuelta").length,0);
+  }catch(e){}
+  return 0;
+}
+const ICONO_UI = {
+  menu:'<path d="M4 6h16M4 12h16M4 18h16"/>', cerrar:'<path d="M6 6l12 12M18 6L6 18"/>',
+  contraer:'<path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>', clave:'<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M14 9l2 2"/>',
+  salir:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'
+};
+const svgUI = (d, cls) => `<svg class="${cls||""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+/* Logo LATAM (misma lógica que logoHtml_ en Config.gs). modo "tema" o "oscuro" (siempre la versión para fondo oscuro). */
+function logoHTML(tipo, modo){
+  const L=(window.LOGOS||{})[tipo]||{};
+  const img=(u,cls)=>u?`<img class="${cls}" src="${esc(u)}" alt="LATAM" onerror="this.parentNode.classList.add('err');this.remove()">`:"";
+  const imgs= modo==="oscuro" ? img(L.dark,"lg-d solo") : img(L.light,"lg-l")+img(L.dark,"lg-d");
+  return `<span class="lg lg-${tipo} ${modo}${imgs?"":" err"}">${imgs}<svg class="lg-alt" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg></span>`;
+}
+const marcaHTML = () => logoHTML("simbolo","oscuro");
+function barraLateral(tabs){
+  const grupos=GRUPOS_NAV.map(([t,ks])=>[t,ks.filter(k=>tabs.includes(k))]).filter(g=>g[1].length);
+  const u=S.usuario||{}, ini=(u.nombre||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  const item=k=>{ const n=esAdmin()?pendientesNav(k):0;
+    return `<button type="button" class="side-i" data-atab="${k}" data-label="${esc(TAB_NOMBRE[k])}" aria-current="${S.tab===k?"page":"false"}">
+      <span class="side-ic">${svgUI(ICONO_NAV[k]||"")}${n?`<i class="side-dot"></i>`:""}</span><span class="side-l">${TAB_NOMBRE[k]}</span>${n?`<b class="side-n num">${n>99?"99+":n}</b>`:""}</button>`; };
+  return `<aside class="side" id="side" aria-label="Navegación principal">
+    <div class="side-head"><div class="side-brand">${marcaHTML()}<div class="side-brand-t"><b>INS 360</b><small>LATAM · Instructores LP</small></div></div>
+      <button type="button" class="side-x" data-side="cerrar" aria-label="Cerrar menú">${svgUI(ICONO_UI.cerrar)}</button></div>
+    <div class="side-perfil"><span class="avatar">${esc(ini)}${u.foto?`<img src="${esc(u.foto)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`:""}</span>
+      <div><b>${esc(u.nombre||"")}</b><small>${esc(u.rolTxt||"")}</small>${u.correo?`<small>${esc(u.correo)}</small>`:""}</div></div>
+    <nav class="side-nav">${grupos.map(([t,ks])=>`<div class="side-g"><span class="side-t">${t}</span>${ks.map(item).join("")}</div>`).join("")}</nav>
+    <div class="side-foot">
+      <button type="button" class="side-i solo-movil" data-sideact="preferencias" data-label="Preferencias"><span class="side-ic">${svgUI('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>')}</span><span class="side-l">Preferencias</span></button>
+      <button type="button" class="side-i solo-movil" data-sideact="cambiarClave" data-label="Cambiar contraseña"><span class="side-ic">${svgUI(ICONO_UI.clave)}</span><span class="side-l">Cambiar contraseña</span></button>
+      <button type="button" class="side-i solo-movil peligro" data-sideact="salir" data-label="Cerrar sesión"><span class="side-ic">${svgUI(ICONO_UI.salir)}</span><span class="side-l">Cerrar sesión</span></button>
+      <button type="button" class="side-i solo-escritorio side-mini-btn" data-side="mini" data-label="Expandir menú"><span class="side-ic">${svgUI(ICONO_UI.contraer)}</span><span class="side-l">Contraer menú</span></button>
+    </div>
+  </aside><div class="side-scrim" data-side="cerrar"></div>`;
+}
+/* Pantalla de inicio (la misma que muestra Index.html al abrir) */
+function splashHTML(msg){
+  const logo=logoHTML('completo','tema');
+  const fondo=window.FONDO_INICIO?`<img class="splash-bg" src="${esc(window.FONDO_INICIO)}" alt="" onload="this.parentNode.classList.add('con-fondo')" onerror="this.remove()">`:"";
+  return `<div class="splash" role="status" aria-live="polite">${fondo}<div class="splash-c">${logo}<h1 class="splash-n">${esc(window.NOMBRE_APP||"Rol de instructores LP")}</h1><p class="splash-s">Gestión de instructores LP</p>
+    <div class="splash-bar" aria-hidden="true"><i></i></div><p class="splash-m">${esc(msg||"Cargando…")}</p></div><p class="splash-v">Versión ${esc(window.VERSION_APP||"")}</p></div>`;
+}
+/* ============ Preferencias del usuario (se guardan en este navegador) ============ */
+const temaGuardado = () => { try{ return localStorage.getItem("rolins.tema")||"sistema"; }catch(e){ return "sistema"; } };
+function aplicarTema(t){
+  try{ if(t==="sistema") localStorage.removeItem("rolins.tema"); else localStorage.setItem("rolins.tema",t); }catch(e){}
+  if(t==="light"||t==="dark") document.documentElement.setAttribute("data-theme",t); else document.documentElement.removeAttribute("data-theme");
+}
+function abrirPreferencias(){
+  const t=temaGuardado();
+  const op=(v,l,d,ic)=>`<label class="tema-op"><input type="radio" name="tema" value="${v}" ${t===v?"checked":""}><span class="tema-prev ${v}" aria-hidden="true"><i></i><i></i><i></i></span><b>${l}</b><small>${d}</small></label>`;
+  abrirPanel("Preferencias","Se guardan en este navegador.",
+    `<div class="stack" style="gap:18px"><div><h3 style="margin-bottom:8px">Apariencia</h3><div class="tema-ops">
+      ${op("sistema","Sistema","Sigue el modo del dispositivo")}${op("light","Claro","Siempre claro")}${op("dark","Oscuro","Siempre oscuro")}</div></div>
+      ${esAdmin()?`<div><h3 style="margin-bottom:8px">Rol y calendario</h3><label class="row" style="gap:10px"><input type="checkbox" id="prefColSheet" ${usarColSheet()?"checked":""}> Mostrar las celdas con los colores del Google Sheet</label></div>`:""}
+      <div><h3 style="margin-bottom:8px">Menú lateral</h3><label class="row" style="gap:10px"><input type="checkbox" id="prefMini" ${document.body.classList.contains("side-mini")?"checked":""}> Mantener el menú contraído (solo íconos)</label></div></div>`);
+  document.querySelectorAll('input[name="tema"]').forEach(r=>r.onchange=()=>aplicarTema(r.value));
+  const cs=document.getElementById("prefColSheet"); if(cs) cs.onchange=()=>{ try{ localStorage.setItem("rolins.colSheet",cs.checked?"1":"0"); }catch(e){} render(); };
+  const pm=document.getElementById("prefMini"); if(pm) pm.onchange=()=>{ document.body.classList.toggle("side-mini",pm.checked); try{ localStorage.setItem("rolins.sideMini",pm.checked?"1":"0"); }catch(e){} };
+}
+/* Menú: en escritorio se contrae a íconos (se recuerda); en celular se abre como panel */
+const esMovil = () => window.matchMedia("(max-width:768px)").matches;
+function miniGuardado(){ try{ const v=localStorage.getItem("rolins.sideMini"); if(v!==null) return v==="1"; }catch(e){} return window.innerWidth<1200; }
+function alternarMenu(){
+  if(esMovil()){ document.body.classList.toggle("side-open"); return; }
+  const mini=!document.body.classList.contains("side-mini"); document.body.classList.toggle("side-mini",mini);
+  try{ localStorage.setItem("rolins.sideMini",mini?"1":"0"); }catch(e){}
+}
+const cerrarMenuMovil = () => document.body.classList.remove("side-open");
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") cerrarMenuMovil(); });
 function vacioRol(){
   return `<div class="card empty-state" style="margin-top:12px"><h2>Aún no hay roles cargados</h2><p class="hint">${esAdmin()?"Conecta el Google Sheet del mes en “Actualizar rol”.":"Coordinación todavía no publica el rol. Vuelve a revisar más tarde."}</p>${esAdmin()&&puede("cargar")?`<button class="btn primary" data-atab="cargar">Ir a Actualizar rol</button>`:""}</div>`;
 }
@@ -361,13 +497,19 @@ function vacioRol(){
 
 /* ============ Eventos ============ */
 function wire(){
+  // Solo lectura: deshabilita los campos de edición de la sección (los botones de acción se ocultan con CSS)
+  document.querySelectorAll(".shell-main.ro #fCfg input, .shell-main.ro .tipos input, .shell-main.ro .tipos textarea, .shell-main.ro #fFuente input, .shell-main.ro #fileX, .shell-main.ro #autoSync").forEach(x=>{ x.disabled=true; });
+  wireIntercambios();
+  wireColores();
   wirePw();
   if(!S.usuario){ wireLogin(); return; }
   document.querySelectorAll("#app [data-drill]").forEach(el=>el.addEventListener("click",e=>{ e.stopPropagation(); const f=DR[el.dataset.drill]; if(f) f(); }));
   const sm=$("#selMes"); if(sm) sm.onchange=()=>irAMes(sm.value);
   document.querySelectorAll("[data-messtep]").forEach(b=>b.onclick=()=>{ const L=listaMesesActual(); const i=L.indexOf(S.mes)+Number(b.dataset.messtep); if(L[i]) irAMes(L[i]); });
   wireVac();
-  document.querySelectorAll("[data-atab]").forEach(b=>b.onclick=()=>{ S.tab=b.dataset.atab; if(S.tab==="cargar"){ S.fuentes=null; S.fuentesMsg=""; } if(S.tab==="usuarios") S.adm=null; render(); });
+  document.querySelectorAll("[data-side]").forEach(b=>b.onclick=()=>{ if(b.dataset.side==="mini") alternarMenu(); else cerrarMenuMovil(); });
+  document.querySelectorAll("[data-sideact]").forEach(b=>b.onclick=()=>{ cerrarMenuMovil(); if(b.dataset.sideact==="salir") confirmarSalir(); else if(b.dataset.sideact==="preferencias") abrirPreferencias(); else abrirCambiarClave(); });
+  document.querySelectorAll("[data-atab]").forEach(b=>b.onclick=()=>{ cerrarMenuMovil(); scrollTo(0,0); S.tab=b.dataset.atab; if(S.tab==="cargar"){ S.fuentes=null; S.fuentesMsg=""; } if(S.tab==="colores"){ S.tipos=null; S.colVista=null; S.colImport=null; } if(S.tab==="usuarios") S.adm=null; render(); });
   document.querySelectorAll("[data-modo]").forEach(b=>b.onclick=()=>{ S.modo=b.dataset.modo; render(); });
   document.querySelectorAll("[data-vv]").forEach(b=>b.onclick=()=>{ S.vVuelo=b.dataset.vv; render(); });
   document.querySelectorAll("[data-dm]").forEach(b=>b.onclick=()=>{ S.distModo=b.dataset.dm; render(); });
@@ -397,6 +539,7 @@ function wire(){
   document.querySelectorAll("[data-act='sincTodo'],[data-sinc]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Sincronizando…");
     try{ const res=await api("apiSincronizar",S.token,b.dataset.sinc||""); S.fuentesMsg=resultadoSync(res); S.fuentes=null; await recargar(); toast(res.every(r=>r.ok)?"Sincronización completa":"Algunos meses no se pudieron leer"); }
     catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-fedit]").forEach(b=>b.onclick=()=>abrirEditarFuente(b.dataset.fedit));
   document.querySelectorAll("[data-pausa]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"…");
     try{ await api("apiActivarFuente",S.token,b.dataset.pausa,b.dataset.on==="1"); S.fuentes=null; render(); }catch(e){ setCargando(b,false); toast(e.message); } });
   const au=$("#autoSync"); if(au) au.onchange=async()=>{ au.disabled=true;
@@ -414,6 +557,17 @@ function wire(){
   // Usuarios
   document.querySelectorAll("[data-act='recargarUsuarios']").forEach(b=>b.onclick=()=>{ S.adm=null; render(); });
   document.querySelectorAll("[data-codigo]").forEach(b=>b.onclick=()=>abrirGenerarCodigo(b.dataset.codigo));
+  document.querySelectorAll("[data-nuevoadm]").forEach(b=>b.onclick=abrirNuevoAdmin);
+  document.querySelectorAll("[data-perfnuevo]").forEach(b=>b.onclick=()=>abrirPerfil(null));
+  document.querySelectorAll("[data-perfedit]").forEach(b=>b.onclick=()=>abrirPerfil(b.dataset.perfedit));
+  document.querySelectorAll("[data-perfil]").forEach(sel=>sel.onchange=async()=>{ sel.disabled=true;
+    try{ await api("apiAsignarPerfil",S.token,sel.dataset.perfil,sel.value); toast("Perfil asignado"); S.adm=null; render(); }
+    catch(e){ sel.disabled=false; toast(e.message); S.adm=null; render(); } });
+  document.querySelectorAll("[data-syncperf]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Consultando directorio…");
+    try{ const r=await api("apiSincronizarPerfiles",S.token); toast(`Perfiles actualizados: ${r.actualizados}${r.sinCorreo?` · ${r.sinCorreo} sin correo`:""}${r.noEncontrados.length?` · no encontrados: ${r.noEncontrados.join(", ")}`:""}`); S.adm=null; render(); }
+    catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-activ]").forEach(b=>b.onclick=async()=>{ const on=b.dataset.on==="1"; if(!on && !confirm("¿Desactivar su acceso? Se cerrarán sus sesiones abiertas.")) return; setCargando(b,true,"…");
+    try{ await api("apiActivarUsuario",S.token,b.dataset.activ,on); toast(on?"Acceso activado":"Acceso desactivado"); S.adm=null; render(); }catch(e){ setCargando(b,false); toast(e.message); } });
   document.querySelectorAll("[data-cerrar]").forEach(b=>b.onclick=async()=>{ if(!confirm("¿Cerrar todas las sesiones abiertas de esta persona?")) return; setCargando(b,true,"…");
     try{ await api("apiCerrarSesiones",S.token,b.dataset.cerrar); if(b.dataset.cerrar===S.usuario.bp) return; toast("Sesiones cerradas"); S.adm=null; render(); }catch(e){ setCargando(b,false); toast(e.message); } });
 }
@@ -422,8 +576,10 @@ document.addEventListener("click",e=>{
   const m=$("#menuCuenta"); if(m && m.open && !m.contains(e.target)) m.open=false;
   const a=e.target.closest&&e.target.closest("#who [data-act]"); if(!a) return;
   if(m) m.open=false;
-  if(a.dataset.act==="salir") salir();
+  if(a.dataset.act==="salir") confirmarSalir();
   if(a.dataset.act==="cambiarClave") abrirCambiarClave();
+  if(a.dataset.act==="notifs") abrirNotifs();
+  if(a.dataset.act==="preferencias") abrirPreferencias();
 });
 (function(){ const tip=$("#tip");
   document.addEventListener("pointermove",e=>{ if(e.pointerType==="touch") return; const el=e.target.closest&&e.target.closest("[data-tip]"); if(!el||!el.dataset.tip){ tip.hidden=true; return; }

@@ -67,9 +67,10 @@ function apiDatos(token) {
     const perfil = perfilPublico_(u);
     const equipo = perfil.equipo;
     const mio = bp => bp === u.bp;
-    const meses = leerRoles_().map(m => ({
+    const ocultos = mesesOcultos_();
+    const meses = leerRoles_().filter(m => u.rol === 'admin' || ocultos.indexOf(m.mes) < 0).map(m => ({
       mes: m.mes, fuente: m.fuente, hoja: m.hoja, origen: m.origen, actualizadoAt: m.actualizadoAt,
-      total: m.instructores.length,
+      total: m.instructores.length, oculto: ocultos.indexOf(m.mes) >= 0,
       instructores: equipo ? m.instructores : m.instructores.filter(i => mio(i.bp))
     }));
     const resp = leerRespuestas_();
@@ -91,6 +92,8 @@ function apiDatos(token) {
       vigencias: vigencias,
       dotacion: dotacion,
       vac: datosVac_(equipo, u.bp),
+      intercambios: intercambiosPara_(u),
+      intAprob: u.rol === 'admin' ? infoAprobadoresInt_(u) : null,
       baseUrl: u.rol === 'admin' ? ss_().getUrl() : ''
     };
   });
@@ -103,6 +106,7 @@ function exigirMesEditable_(mes) {
   if (mes < mesActual_()) throw falla_('Solo puedes confirmar o comentar el rol del mes en curso o de los meses siguientes.');
 }
 function exigirEnRol_(bp, mes) {
+  if (!mesVisible_(mes)) throw falla_('Ese mes todavía no está publicado para instructores.');
   const m = leerRoles_().find(x => x.mes === mes);
   if (!m || !m.instructores.some(i => i.bp === bp)) throw falla_('No figuras en el rol de ese mes.');
 }
@@ -142,12 +146,13 @@ function apiObservacion(token, mes, dia, texto) {
 
 function apiResolverObs(token, mes, bp, obsId) {
   return responder_(() => {
-    const admin = sesion_(token, { admin: true }).u;
+    const admin = sesion_(token, { seccion: 'seg', nivel: 2 }).u;
     bp = bpTxt_(bp);
     return conBloqueo_(() => {
       const r = leerRespuestas_()[mes + '_' + bp];
       const o = r && (r.obs || []).find(x => x.id === obsId);
       if (!o) throw falla_('No encontramos esa observación.');
+      if (o.estado === 'resuelta') throw yaResuelto_('Esa observación', 'resuelta', o.resueltaPor, o.resueltaAt);
       o.estado = 'resuelta'; o.resueltaAt = ahoraISO_(); o.resueltaPor = nombreDe_(admin);
       return guardarRespuesta_(r);
     });
@@ -158,7 +163,7 @@ function apiResolverObs(token, mes, bp, obsId) {
 
 function apiPublicarRol(token, rol) {
   return responder_(() => {
-    sesion_(token, { admin: true });
+    sesion_(token, { seccion: 'cargar', nivel: 2 });
     if (!rol || !/^\d{4}-\d{2}$/.test(String(rol.mes || ''))) throw falla_('Mes del rol inválido.');
     const nd = diasDelMes_(rol.mes);
     const ins = (rol.instructores || []).slice(0, 300).map(i => ({

@@ -221,7 +221,7 @@ function admSeguimiento(){
   const editable=esEditable(S.mes);
   return `<div class="stack">
     ${!editable?`<div class="note">${mesLargo(S.mes)} ya pasó: las confirmaciones y observaciones quedan como registro y ya no se pueden modificar.</div>`:""}
-    <div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+    <div class="kpis k4">
       <div class="kpi"><span class="l">Confirmaron su rol de ${mi.nombre}</span><span class="v num">${ok}<small> de ${n}</small></span><div class="meter"><span style="flex:${ok};background:var(--good)"></span><span style="flex:${ob};background:var(--crit)"></span><span style="flex:${pe};background:var(--line-2)"></span></div><span class="d">${pe} pendientes · ${ob} con observaciones</span></div>
       <div class="kpi"><span class="l">Observaciones abiertas</span><span class="v num">${ab.length}</span><span class="d">${obsAll.length-ab.length} resueltas</span></div>
       <button class="kpi" ${drill(()=>abrirDrill("Días sin asignar",mesLargo(S.mes),regsDe(P.map(i=>i.bp),[S.mes],x=>x.x.k==="SIN")))}><span class="l">Días sin asignar en el rol</span><span class="v num">${sin}</span><span class="go">Ver días</span></button>
@@ -244,9 +244,9 @@ function admMatriz(){
   const rows=P.filter(i=>!q||norm(i.nombre).includes(q)||String(i.bp).includes(q));
   const head=`<tr><th class="nm">Instructor</th>${Array.from({length:mi.dias},(_,k)=>{const d=k+1,w=dowOf(S.mes,d);return `<th style="${[0,6].includes(w)?"color:var(--muted)":""}"><span class="num">${d}</span><small>${DOWS[w]}</small></th>`}).join("")}</tr>`;
   const body=rows.map(i=>{ const e=estadoInst(i.bp); return `<tr><td class="nm"><b>${esc(i.nombre)}</b><span class="mono">BP ${esc(i.bp)}</span> <span class="pill ${e.cls}" style="padding:0 7px;font-size:10.5px"><i></i>${e.txt}</span></td>
-    ${i.p.map((x,k)=>`<td class="c"><button class="cell k-${x.k} ${S.filtro===x.k?"hit":""}" ${drill(()=>abrirDia(i.bp,S.mes,k+1))} data-tip="${esc(`<b>${i.nombre} · ${k+1} ${mesCorto(S.mes)}</b><br>${x.titulo}${x.meta?"<br>"+x.meta.split("\n").slice(0,2).join("<br>"):""}`)}">${esc(x.code)}${["SIN","DO","VAC","FER","BLA"].includes(x.k)?"":`<small>${esc(x.k==="VIN"?"INS":x.k)}</small>`}${x.pernocta?`<i class="v"></i>`:""}</button></td>`).join("")}</tr>`; }).join("");
+    ${i.p.map((x,k)=>`<td class="c"><button class="cell k-${x.k} ${S.filtro===x.k?"hit":""}" ${estiloSheet(x)} ${drill(()=>abrirDia(i.bp,S.mes,k+1))} data-tip="${esc(`<b>${i.nombre} · ${k+1} ${mesCorto(S.mes)}</b><br>${x.titulo}${x.meta?"<br>"+x.meta.split("\n").slice(0,2).join("<br>"):""}`)}">${esc(x.code)}${["SIN","DO","VAC","FER","BLA"].includes(x.k)?"":`<small>${esc(x.k==="VIN"?"INS":x.k)}</small>`}${x.pernocta?`<i class="v"></i>`:""}</button></td>`).join("")}</tr>`; }).join("");
   const cuenta=k=>rows.reduce((a,i)=>a+i.p.filter(x=>x.k===k).length,0);
-  return `<div class="stack"><div class="row between"><div class="chips"><span class="hint">Resaltar:</span>${pres.map(k=>`<button class="chip" aria-pressed="${S.filtro===k}" data-filtro="${k}">${sw(k)}${KC[k].corto} <span class="num">${cuenta(k)}</span></button>`).join("")}</div>
+  return `<div class="stack"><div class="row between">${toggleColSheetHTML()}<div class="chips"><span class="hint">Resaltar:</span>${pres.map(k=>`<button class="chip" aria-pressed="${S.filtro===k}" data-filtro="${k}">${sw(k)}${KC[k].corto} <span class="num">${cuenta(k)}</span></button>`).join("")}</div>
     <input class="input" id="busca" placeholder="Buscar instructor o BP" value="${esc(S.busca)}" style="max-width:240px" autocomplete="off"></div>
     ${rows.length?`<div class="mx-wrap"><table class="mx ${S.filtro?"filtering":""}"><thead>${head}</thead><tbody>${body}</tbody></table></div>`:`<p class="empty">Ningún instructor coincide con “${esc(S.busca)}”.</p>`}
     <p class="hint">${rows.length} de ${P.length} instructores. Cada celda está clasificada; tócala para ver el detalle y el texto original.</p></div>`;

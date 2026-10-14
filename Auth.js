@@ -80,7 +80,8 @@ function usuarios_() {
     flota: col_(h, 'flota'),
     cat: col_(h, 'categoria'),
     est: col_(h, 'estado en dotacion'),
-    act: col_(h, 'activo')
+    act: col_(h, 'activo'),
+    cargo: col_(h, 'cargo'), area: col_(h, 'area'), foto: col_(h, 'foto'), perfil: col_(h, 'perfil')
   };
   _USU = t.rows.map((r, i) => ({
     fila: i + 2,
@@ -93,8 +94,12 @@ function usuarios_() {
     flota: String(celda_(r, c.flota) || '').trim(),
     categoria: String(celda_(r, c.cat) || '').trim(),
     estado: String(celda_(r, c.est) || '').trim(),
-    activo: c.act < 0 || normTxt_(celda_(r, c.act)) !== 'no'
+    activo: c.act < 0 || normTxt_(celda_(r, c.act)) !== 'no',
+    cargo: String(celda_(r, c.cargo) || '').trim(), area: String(celda_(r, c.area) || '').trim(), foto: String(celda_(r, c.foto) || '').trim(),
+    perfil: String(celda_(r, c.perfil) || '').trim()
   })).filter(u => u.bp);
+  // Los administradores principales siempre entran como administradores, diga lo que diga su fila.
+  _USU.forEach(u => { if (esPrincipal_(u.bp)) { u.principal = true; u.rol = 'admin'; u.activo = true; } });
   return _USU;
 }
 function buscarUsuario_(texto) {
@@ -104,12 +109,20 @@ function buscarUsuario_(texto) {
   const bp = bpTxt_(t);
   return usuarios_().find(u => u.bp === bp) || null;
 }
+function esPrincipal_(bp) { return (CONFIG.adminsPrincipales || []).map(bpTxt_).indexOf(bpTxt_(bp)) >= 0; }
+/** A un administrador principal solo él mismo puede restablecerle el acceso o cerrarle las sesiones. */
+/** Restablecer acceso o cerrar sesiones de otro: nunca a un principal ni a alguien con más permisos (evita suplantarlo). */
+function exigirPuedeGestionar_(admin, u) {
+  if (u.bp === admin.bp) return;
+  if (u.principal) throw falla_(nombreDe_(u) + ' es administrador principal: solo él puede restablecer su acceso o cerrar sus sesiones.');
+  exigirPuedeAdministrar_(admin, u);
+}
 function puedeEntrar_(u) { return !!(u && u.activo && u.rol); }
 function nombreDe_(u) { return u.nombre || u.nombreCompleto || ('BP ' + u.bp); }
 
 /* ---------------- Permisos (hoja Permisos) ---------------- */
 
-const VISTAS_ORDEN_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'cargar', 'usuarios', 'mi'];
+const VISTAS_ORDEN_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'int', 'cargar', 'colores', 'usuarios', 'mi'];
 const VISTAS_EQUIPO_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac'];
 function claveVista_(etiqueta, rol) {
   const t = normTxt_(etiqueta);
@@ -121,10 +134,12 @@ function claveVista_(etiqueta, rol) {
   if (t.indexOf('actualizar rol') === 0 || t.indexOf('fuentes') === 0) return 'cargar';
   if (t.indexOf('usuarios') === 0) return 'usuarios';
   if (t.indexOf('vacaciones') === 0) return 'vac';
+  if (t.indexOf('intercambio') === 0) return 'int';
+  if (t.indexOf('tipos') === 0 || t.indexOf('colores') === 0) return 'colores';
   return '';
 }
 function vistasDe_(rol) {
-  const def = rol === 'admin' ? ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'cargar', 'usuarios'] : ['mi'];
+  const def = rol === 'admin' ? ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'int', 'cargar', 'colores', 'usuarios'] : ['mi'];
   const t = filas_(hoja_(CONFIG.hojas.permisos));
   if (!t.rows.length) return def;
   const cRol = rol === 'admin' ? col_(t.head, 'administrador', 'admin') : col_(t.head, 'instructor');
@@ -137,7 +152,7 @@ function vistasDe_(rol) {
     if (!k) return;
     set[k] = normTxt_(r[cRol]) === 'si';
   });
-  if (rol !== 'admin') { delete set.cargar; delete set.usuarios; delete set.vac; } // nunca para instructores (sus vacaciones están en Mi rol)
+  if (rol !== 'admin') { delete set.cargar; delete set.usuarios; delete set.vac; delete set.int; delete set.colores; } // nunca para instructores (sus vacaciones están en Mi rol)
   if (rol === 'admin') set.usuarios = true;                         // evita que coordinación se quede fuera
   if (rol === 'inst' && !Object.keys(set).some(k => set[k])) set.mi = true;
   return VISTAS_ORDEN_.filter(k => set[k]);
@@ -145,10 +160,14 @@ function vistasDe_(rol) {
 function accesoEquipo_(rol, vistas) { return rol === 'admin' || vistas.some(v => VISTAS_EQUIPO_.indexOf(v) >= 0); }
 
 function perfilPublico_(u) {
-  const vistas = vistasDe_(u.rol);
+  // Coordinación: las secciones salen de su perfil de acceso; instructores: de la hoja Permisos
+  const niveles = nivelesDe_(u);
+  const vistas = u.rol === 'admin' ? VISTAS_ORDEN_.filter(k => (niveles[k] || 0) >= 1) : vistasDe_(u.rol);
   return {
     bp: u.bp, nombre: nombreDe_(u), nombreCompleto: u.nombreCompleto, correo: u.correo,
-    rol: u.rol, rolTxt: u.rol === 'admin' ? 'Administrador' : 'Instructor',
+    rol: u.rol, rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : 'Instructor',
+    principal: !!u.principal, cargo: u.cargo || '', area: u.area || '', foto: u.foto || '',
+    perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : '', niveles: niveles,
     vistas: vistas, equipo: accesoEquipo_(u.rol, vistas)
   };
 }
@@ -173,7 +192,9 @@ function generarCodigo_(u, quien) {
   const s = nuevaSal_();
   c.cod = { h: hashClave_(codigo, s), s: s, exp: Date.now() + CONFIG.codigoHoras * 3600e3, por: quien || '' };
   guardarCred_(u.bp, c);
-  limpiarFallos_(u.bp);
+  // Solo coordinación (o el editor) desbloquea al generar un código. Si lo pidió cualquiera con
+  // "¿Olvidaste tu contraseña?", limpiar los fallos permitiría saltarse el bloqueo por intentos.
+  if (quien !== 'correo') limpiarFallos_(u.bp);
   return { codigo: codigo.slice(0, 4) + '-' + codigo.slice(4), vence: new Date(c.cod.exp).toISOString() };
 }
 
@@ -184,11 +205,11 @@ function enviarCodigoPorCorreo_(u, codigo, vence) {
     subject: CONFIG.nombreApp + ': tu código de acceso',
     body: 'Hola ' + nombreDe_(u) + ',\n\nTu código de acceso es: ' + codigo + '\n\n' +
       'Entra a la aplicación, elige "Activar cuenta o usar un código", escribe tu BP, este código y tu nueva contraseña.\n' +
-      'El código sirve una sola vez y vence el ' + venceTxt + '.\n\nSi no lo pediste, ignora este correo.',
+      'El código sirve una sola vez y vence el ' + venceTxt + '.\n\n' + (urlApp_() ? 'Entra aquí: ' + urlApp_() + '\n\n' : '') + 'Si no lo pediste, ignora este correo.',
     htmlBody: '<p>Hola ' + nombreDe_(u) + ',</p><p>Tu código de acceso es:</p>' +
       '<p style="font:700 24px monospace;letter-spacing:3px">' + codigo + '</p>' +
       '<p>Entra a la aplicación, elige <b>Activar cuenta o usar un código</b>, escribe tu BP, este código y tu nueva contraseña.<br>' +
-      'El código sirve una sola vez y vence el ' + venceTxt + '.</p><p style="color:#666">Si no lo pediste, ignora este correo.</p>',
+      'El código sirve una sola vez y vence el ' + venceTxt + '.</p>' + botonAppHtml_('Abrir ' + CONFIG.nombreApp + ' y activar mi cuenta') + '<p style="color:#666">Si no lo pediste, ignora este correo.</p>',
     name: CONFIG.nombreApp
   });
 }
@@ -251,7 +272,8 @@ function sesion_(token, opciones) {
   if (!puedeEntrar_(u)) { fin(); throw falla_('Tu acceso fue desactivado. Consulta con coordinación.', 'SESION'); }
   const c = cred_(u.bp) || { v: 0 };
   if ((c.v || 0) !== s.v) { fin(); throw falla_('Tu sesión se cerró porque cambió tu contraseña o coordinación cerró tus sesiones.', 'SESION'); }
-  if (opciones.admin && u.rol !== 'admin') throw falla_('Esta acción es solo para coordinación.', 'PERMISO');
+  if ((opciones.admin || opciones.seccion) && u.rol !== 'admin') throw falla_('Esta acción es solo para coordinación.', 'PERMISO');
+  if (opciones.seccion) exigirNivel_(u, opciones.seccion, opciones.nivel || 1);
   cache_().put(id, raw, 600);
   return { u: u, s: s, id: id };
 }
@@ -404,7 +426,7 @@ function apiLogout(token, disp) {
 
 function apiUsuarios(token) {
   return responder_(() => {
-    sesion_(token, { admin: true });
+    sesion_(token, { seccion: 'usuarios', nivel: 1 });
     // Resumen de Registro por BP
     const reg = {};
     const t = filas_(hoja_(CONFIG.hojas.registro));
@@ -417,15 +439,19 @@ function apiUsuarios(token) {
       if (ev === 'intento fallido') x.fallidos++;
     });
     const ahora = Date.now();
+    const yo = sesion_(token, { seccion: 'usuarios', nivel: 1 }).u;
     return {
-      baseUrl: ss_().getUrl(),
+      baseUrl: ss_().getUrl(), soyPrincipal: !!yo.principal, miBp: yo.bp, misNiveles: nivelesDe_(yo), puedoGestionar: nivel_(yo, 'usuarios') >= 2,
+      principalesFaltantes: (CONFIG.adminsPrincipales || []).map(bpTxt_).filter(bp => bp && !usuarios_().some(u => u.bp === bp)),
       usuarios: usuarios_().map(u => {
         const c = cred_(u.bp) || {};
         const r = reg[u.bp] || {};
         return {
           bp: u.bp, nombre: nombreDe_(u), nombreCompleto: u.nombreCompleto, correo: u.correo,
-          rolTxt: u.rol === 'admin' ? 'Administrador' : u.rol === 'inst' ? 'Instructor' : (u.rolTxt || 'Sin rol'),
-          rol: u.rol, activo: u.activo,
+          rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : u.rol === 'inst' ? 'Instructor' : (u.rolTxt || 'Sin rol'),
+          rol: u.rol, activo: u.activo, principal: !!u.principal, cargo: u.cargo, area: u.area, foto: u.foto,
+          perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : '',
+          administrable: u.bp === yo.bp || (() => { try { exigirPuedeGestionar_(yo, u); return true; } catch (e) { return false; } })(),
           cuenta: c.h ? 'activa' : 'sin activar',
           claveDesde: c.t || null,
           codigoVence: c.cod && c.cod.exp > ahora ? new Date(c.cod.exp).toISOString() : null,
@@ -439,10 +465,11 @@ function apiUsuarios(token) {
 
 function apiGenerarCodigo(token, bp, enviarCorreo) {
   return responder_(() => {
-    const admin = sesion_(token, { admin: true }).u;
+    const admin = sesion_(token, { seccion: 'usuarios', nivel: 2 }).u;
     const u = usuarios_().find(x => x.bp === bpTxt_(bp));
     if (!u) throw falla_('No encontramos ese BP en la hoja Usuarios.');
     if (!puedeEntrar_(u)) throw falla_('Ese usuario está inactivo o no tiene rol. Revísalo en la hoja Usuarios.');
+    exigirPuedeGestionar_(admin, u);
     const g = conBloqueo_(() => generarCodigo_(u, admin.bp));
     let enviado = false, errorCorreo = '';
     if (enviarCorreo) {
@@ -456,12 +483,119 @@ function apiGenerarCodigo(token, bp, enviarCorreo) {
 
 function apiCerrarSesiones(token, bp) {
   return responder_(() => {
-    const admin = sesion_(token, { admin: true }).u;
+    const admin = sesion_(token, { seccion: 'usuarios', nivel: 2 }).u;
     const u = usuarios_().find(x => x.bp === bpTxt_(bp));
     if (!u) throw falla_('No encontramos ese BP.');
+    exigirPuedeGestionar_(admin, u);
     conBloqueo_(() => { const c = cred_(u.bp) || { v: 0 }; c.v = (c.v || 0) + 1; guardarCred_(u.bp, c); });
     limpiarFallos_(u.bp);
     registrar_(u, 'Sesiones cerradas', 'Por ' + nombreDe_(admin), '');
     return true;
   });
+}
+
+/* ---------------- Administradores (solo administradores principales) ---------------- */
+
+/** Crear o activar/desactivar usuarios: principales o quien gestione "Usuarios y accesos". */
+function exigirGestorUsuarios_(token) { return sesion_(token, { seccion: 'usuarios', nivel: 2 }).u; }
+
+/** Crea un administrador en la hoja Usuarios. Los instructores vienen del escalafón y se cargan en la hoja. */
+function apiCrearAdmin(token, d) {
+  return responder_(() => {
+    const yo = exigirGestorUsuarios_(token);
+    d = d || {};
+    const bp = bpTxt_(d.bp), nombre = String(d.nombre || '').trim(), completo = String(d.nombreCompleto || '').trim();
+    const correo = String(d.correo || '').trim().toLowerCase();
+    if (!/^\d{3,10}$/.test(bp)) throw falla_('El BP debe ser numérico.');
+    if (!nombre) throw falla_('Escribe el nombre con el que aparecerá en la app.');
+    if (correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(correo)) throw falla_('El correo no es válido.');
+    _PERF = null;
+    const perfil = perfilPorNombre_(d.perfil || PERFIL_DEF_);
+    if (!perfil) throw falla_('Ese perfil de acceso no existe.');
+    exigirSinEscalar_(yo, perfil.niveles);
+    return conBloqueo_(() => {
+      _USU = null;
+      const ya = usuarios_().find(u => u.bp === bp);
+      if (ya) throw falla_('El BP ' + bp + ' ya existe en la hoja Usuarios (' + nombreDe_(ya) + ', ' + (ya.rol === 'admin' ? 'administrador' : ya.rol === 'inst' ? 'instructor' : 'sin rol') + ').');
+      if (correo && usuarios_().some(u => u.correo === correo)) throw falla_('Ese correo ya está registrado en otro usuario.');
+      const sh = hoja_(CONFIG.hojas.usuarios);
+      const n = sh.getLastRow() + 1;
+      sh.getRange(n, 1).setNumberFormat('@');
+      escribirFila_(sh, n, {
+        'BP': bp, 'Nombre (como aparece en el rol)': nombre, 'Nombre completo': completo, 'Correo corporativo': correo,
+        'Rol': 'Administrador', 'Activo': 'SI', 'Observaciones': 'Creado desde la app por ' + nombreDe_(yo) + ' el ' + hoyISO_()
+      });
+      asegurarColumnas_(sh, ['Perfil']);
+      escribirFila_(sh, n, { 'Perfil': perfil.nombre });
+      _USU = null;
+      const u = usuarios_().find(x => x.bp === bp);
+      registrar_(u, 'Administrador creado', 'Por ' + nombreDe_(yo), '');
+      return { bp: bp, nombre: nombre };
+    });
+  });
+}
+
+/** Activa o desactiva el acceso de un usuario (no se puede con administradores principales). */
+function apiActivarUsuario(token, bp, activo) {
+  return responder_(() => {
+    const yo = exigirGestorUsuarios_(token);
+    return conBloqueo_(() => {
+      _USU = null;
+      const u = usuarios_().find(x => x.bp === bpTxt_(bp));
+      if (!u) throw falla_('No encontramos ese BP.');
+      if (u.principal) throw falla_('Un administrador principal no se puede desactivar desde la app.');
+      if (u.bp === yo.bp) throw falla_('No puedes desactivar tu propia cuenta.');
+      exigirPuedeAdministrar_(yo, u);
+      escribirFila_(hoja_(CONFIG.hojas.usuarios), u.fila, { 'Activo': activo ? 'SI' : 'NO' });
+      if (!activo) { const c = cred_(u.bp) || { v: 0 }; c.v = (c.v || 0) + 1; guardarCred_(u.bp, c); } // cierra sus sesiones
+      _USU = null;
+      registrar_(u, activo ? 'Acceso activado' : 'Acceso desactivado', 'Por ' + nombreDe_(yo), '');
+      return true;
+    });
+  });
+}
+
+/* ---------------- Perfil corporativo (directorio de Google Workspace) ---------------- */
+
+/**
+ * Busca a cada usuario con correo en el directorio corporativo y guarda Cargo, Área y Foto en la hoja Usuarios.
+ * Usa People API (servicio avanzado). Solo lee datos públicos del directorio; nunca contraseñas.
+ */
+function apiSincronizarPerfiles(token) {
+  return responder_(() => {
+    sesion_(token, { seccion: 'usuarios', nivel: 2 });
+    if (typeof People === 'undefined') throw falla_('Falta activar el servicio avanzado People API en el proyecto de Apps Script.');
+    const sh = asegurarColumnas_(hoja_(CONFIG.hojas.usuarios), ['Cargo', 'Área', 'Foto']);
+    _USU = null;
+    const res = { actualizados: 0, sinCorreo: 0, noEncontrados: [], errores: [] };
+    usuarios_().forEach(u => {
+      if (!u.correo) { res.sinCorreo++; return; }
+      try {
+        const p = perfilDirectorio_(u.correo);
+        if (!p) { res.noEncontrados.push(nombreDe_(u)); return; }
+        escribirFila_(sh, u.fila, { 'Cargo': p.cargo, 'Área': p.area, 'Foto': p.foto });
+        res.actualizados++;
+      } catch (e) {
+        res.errores.push(nombreDe_(u) + ': ' + (e && e.message));
+      }
+    });
+    _USU = null;
+    if (res.errores.length && !res.actualizados) {
+      console.error(res.errores.join(' | '));
+      throw falla_('No se pudo consultar el directorio corporativo. Ejecuta autorizarPermisos en el editor y acepta el permiso del directorio. Detalle: ' + res.errores[0]);
+    }
+    return res;
+  });
+}
+
+function perfilDirectorio_(correo) {
+  const r = People.People.searchDirectoryPeople({
+    query: correo, readMask: 'names,photos,organizations,emailAddresses',
+    sources: ['DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE']
+  });
+  const p = (r.people || []).find(x => (x.emailAddresses || []).some(e => String(e.value || '').toLowerCase() === correo));
+  if (!p) return null;
+  const org = (p.organizations || [])[0] || {};
+  const foto = (p.photos || []).find(f => !f.default);
+  return { cargo: org.title || '', area: org.department || '', foto: foto ? foto.url : '' };
 }

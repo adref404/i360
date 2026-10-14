@@ -46,7 +46,8 @@ function leerRoles_() {
       fila: i + 2,
       instructores: (obj.instructores || []).map(x => ({
         bp: bpTxt_(x.bp), nombre: String(x.nombre || '').trim(),
-        dias: (x.dias || []).map(d => String(d == null ? '' : d))
+        dias: (x.dias || []).map(d => String(d == null ? '' : d)),
+        bg: Array.isArray(x.bg) ? x.bg : null, fg: Array.isArray(x.fg) ? x.fg : null
       })).filter(x => x.nombre || x.bp)
     };
   });
@@ -86,14 +87,18 @@ function guardarRol_(rol, origen) {
 
 function elegirHoja_(ss, hojaPref, gid, mes) {
   const hojas = ss.getSheets();
+  const porGid = gid != null ? hojas.find(x => x.getSheetId() === gid) : null;
   if (hojaPref) {
     const h = ss.getSheetByName(hojaPref) || hojas.find(x => normTxt_(x.getName()) === normTxt_(hojaPref));
-    if (!h) throw falla_('El archivo no tiene una hoja llamada "' + hojaPref + '". Hojas disponibles: ' + hojas.map(x => x.getName()).join(', ') + '.');
-    return h;
+    if (h) return h;
+    // La renombraron: el gid del enlace sigue identificando la misma pestaña
+    if (porGid) return porGid;
+    throw falla_('El archivo no tiene una hoja llamada "' + hojaPref + '". Hojas disponibles: ' + hojas.map(x => x.getName()).join(', ') + '.');
   }
+  // Sin nombre (enlace nuevo o editado): la pestaña exacta del enlace, se llame como se llame
+  if (porGid) return porGid;
   const rolIns = hojas.find(x => /rol\s*ins/i.test(x.getName()));
   if (rolIns) return rolIns;
-  if (gid != null) { const g = hojas.find(x => x.getSheetId() === gid); if (g) return g; }
   if (mes) {
     const nombre = MESES_ES_[Number(mes.slice(5, 7)) - 1];
     const hm = hojas.find(x => normTxt_(x.getName()) === nombre);
@@ -116,6 +121,7 @@ function leerRolDeSheet_(id, hojaPref, gid, mesPref) {
   const sh = elegirHoja_(ss, hojaPref, gid, mesPref);
   const rango = sh.getDataRange();
   const vals = rango.getValues(), disp = rango.getDisplayValues();
+  const fondos = rango.getBackgrounds(), letras = rango.getFontColors(); // la app muestra los mismos colores que el Sheet
   const avisos = [];
 
   let h = -1;
@@ -155,13 +161,16 @@ function leerRolDeSheet_(id, hojaPref, gid, mesPref) {
     const bp = bpTxt_(vals[r][0]);
     const nombre = String(disp[r][1] || '').trim();
     if (!nombre) continue;
-    const dias = [];
-    for (let k = 0; k < nd; k++) dias.push(String(disp[r][c0 + k] == null ? '' : disp[r][c0 + k]).trim());
+    const dias = [], bg = [], fg = [];
+    for (let k = 0; k < nd; k++) {
+      dias.push(String(disp[r][c0 + k] == null ? '' : disp[r][c0 + k]).trim());
+      bg.push(colorHex_((fondos[r] || [])[c0 + k])); fg.push(colorHex_((letras[r] || [])[c0 + k]));
+    }
     if (!bp && dias.every(d => !d)) continue;          // leyendas o notas al pie
     if (!bp) avisos.push(nombre + ' no tiene BP en la columna A.');
     if (bp && vistos[bp]) { avisos.push('El BP ' + bp + ' aparece dos veces; se usa la primera fila.'); continue; }
     if (bp) vistos[bp] = true;
-    instructores.push({ bp: bp, nombre: nombre, dias: dias });
+    instructores.push({ bp: bp, nombre: nombre, dias: dias, bg: bg, fg: fg });
   }
   if (!instructores.length) throw falla_('La hoja "' + sh.getName() + '" no tiene instructores debajo del encabezado.');
   const vacios = instructores.reduce((a, i) => a + i.dias.filter(d => !d).length, 0);
@@ -232,9 +241,13 @@ function sincronizarTodo_(soloMes) {
 
 function apiFuentes(token) {
   return responder_(() => {
-    sesion_(token, { admin: true });
-    const meses = leerRoles_().map(m => ({ mes: m.mes, fuente: m.fuente, hoja: m.hoja, origen: m.origen, actualizadoAt: m.actualizadoAt, instructores: m.instructores.length }));
-    const auto = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sincronizacionProgramada');
+    sesion_(token, { seccion: 'cargar', nivel: 1 });
+    const ocultos = mesesOcultos_();
+    const meses = leerRoles_().map(m => ({ mes: m.mes, fuente: m.fuente, hoja: m.hoja, origen: m.origen, actualizadoAt: m.actualizadoAt, instructores: m.instructores.length, oculto: ocultos.indexOf(m.mes) >= 0 }));
+    // Sin el permiso de disparadores autorizado, getProjectTriggers() falla: no debe impedir ver las fuentes.
+    let auto = false;
+    try { auto = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sincronizacionProgramada'); }
+    catch (e) { console.error('apiFuentes: no se pudieron leer los disparadores (ejecuta autorizarPermisos): ' + (e && e.message)); }
     return { fuentes: leerFuentes_(), meses: meses, automatica: auto };
   });
 }
@@ -242,7 +255,7 @@ function apiFuentes(token) {
 /** Conecta un Google Sheet mensual: lo lee, valida y guarda el mes. */
 function apiAgregarFuente(token, enlace, mes, hoja) {
   return responder_(() => {
-    sesion_(token, { admin: true });
+    sesion_(token, { seccion: 'cargar', nivel: 2 });
     const id = idDeEnlace_(enlace);
     if (!id) throw falla_('Pega el enlace completo del Google Sheet (https://docs.google.com/spreadsheets/d/...).');
     mes = mesTxt_(mes);
@@ -262,9 +275,65 @@ function apiAgregarFuente(token, enlace, mes, hoja) {
   });
 }
 
+/**
+ * Cambia el Google Sheet de un mes ya conectado (por ejemplo, si se pegó el enlace equivocado).
+ * Lee el nuevo enlace (ID + gid identifican archivo y pestaña; el nombre de la hoja se completa solo),
+ * lo valida y reemplaza la copia del mes. Si el mes también cambia, la copia del mes anterior se elimina.
+ */
+function apiEditarFuente(token, mesActual, enlace, mesNuevo, hoja) {
+  return responder_(() => {
+    const yo = sesion_(token, { seccion: 'cargar', nivel: 2 }).u;
+    mesActual = mesTxt_(mesActual);
+    const id = idDeEnlace_(enlace);
+    if (!id) throw falla_('Pega el enlace completo del Google Sheet (https://docs.google.com/spreadsheets/d/...).');
+    const previa = leerFuentes_().find(f => f.mes === mesActual);
+    if (!previa) throw falla_('Ese mes ya no está conectado. Recarga la página.', 'YA_RESUELTO');
+    hoja = String(hoja || '').trim();
+    const gid = gidDeEnlace_(enlace);
+    // Con gid no hace falta el nombre de la hoja: se usa la pestaña exacta del enlace
+    const r = leerRolDeSheet_(id, gid != null ? '' : hoja, gid, mesTxt_(mesNuevo) || '');
+    if (r.mes !== mesActual && leerFuentes_().some(f => f.mes === r.mes))
+      throw falla_(mesLargoTxt_(r.mes) + ' ya tiene otro Google Sheet conectado. Edita esa fila o elige otro mes.');
+    if (r.mes !== mesActual) {
+      // Cambiar de mes dejaría huérfanas las confirmaciones e intercambios ya registrados
+      const conf = Object.keys(leerRespuestas_()).filter(k => k.indexOf(mesActual + '_') === 0).length;
+      const ints = leerIntercambios_().filter(x => x.mes === mesActual).length;
+      if (conf || ints) throw falla_(mesLargoTxt_(mesActual) + ' ya tiene ' + [conf ? conf + ' confirmación(es)' : '', ints ? ints + ' intercambio(s)' : ''].filter(Boolean).join(' y ') +
+        '. No se puede pasar a otro mes: conecta ' + mesLargoTxt_(r.mes) + ' como una fuente nueva y, si este mes está mal, ocúltalo.');
+    } else {
+      const aplicados = leerIntercambios_().filter(x => x.mes === mesActual && x.estadoGuardado === 'aprobado').length;
+      if (aplicados) r.avisos.push(aplicados + ' intercambio(s) aprobado(s) se escribieron en el archivo anterior: revisa que el nuevo los tenga.');
+    }
+    guardarRol_({ mes: r.mes, fuente: r.fuente, hoja: r.hoja, instructores: r.instructores }, 'Google Sheet');
+    conBloqueo_(() => {
+      escribirFuente_(leerFuentes_().find(f => f.mes === mesActual), {
+        mes: r.mes, enlace: String(enlace).trim(), hoja: r.hoja, activo: true, ultima: new Date(),
+        estado: ('OK' + (r.avisos.length ? ' · ' + r.avisos.join(' ') : '')).slice(0, 500),
+        instructores: r.instructores.length, archivo: r.fuente + ' · ' + r.hoja
+      });
+      if (r.mes !== mesActual) {
+        borrarRol_(mesActual);
+        // Si el mes estaba oculto a instructores, el nuevo también queda oculto
+        const ocultos = mesesOcultos_();
+        if (ocultos.indexOf(mesActual) >= 0) props_().setProperty('MESES_OCULTOS', JSON.stringify(ocultos.filter(m => m !== mesActual).concat([r.mes]).sort()));
+      }
+    });
+    registrar_(yo, 'Fuente del rol cambiada', mesActual + (r.mes !== mesActual ? ' → ' + r.mes : '') + ' · ' + r.fuente + ' · ' + r.hoja, '');
+    return { mes: r.mes, mesAnterior: mesActual, instructores: r.instructores.length, archivo: r.fuente, hoja: r.hoja, avisos: r.avisos };
+  });
+}
+function mesLargoTxt_(mes) { return MESES_ES_[Number(mes.slice(5, 7)) - 1].replace(/^./, c => c.toUpperCase()) + ' ' + mes.slice(0, 4); }
+
+/** Elimina la copia de un mes en la hoja Roles. */
+function borrarRol_(mes) {
+  const sh = hoja_(CONFIG.hojas.roles); if (!sh) return;
+  const m = leerRoles_().find(x => x.mes === mes);
+  if (m && m.fila) sh.deleteRow(m.fila);
+}
+
 function apiSincronizar(token, mes) {
   return responder_(() => {
-    sesion_(token, { admin: true });
+    sesion_(token, { seccion: 'cargar', nivel: 2 });
     const res = sincronizarTodo_(mesTxt_(mes));
     if (!res.length) throw falla_(mes ? 'Ese mes no tiene un Google Sheet activo en la hoja Fuentes.' : 'No hay Google Sheets activos en la hoja Fuentes.');
     return res;
@@ -273,7 +342,7 @@ function apiSincronizar(token, mes) {
 
 function apiActivarFuente(token, mes, activo) {
   return responder_(() => {
-    sesion_(token, { admin: true });
+    sesion_(token, { seccion: 'cargar', nivel: 2 });
     const f = leerFuentes_().find(x => x.mes === mesTxt_(mes));
     if (!f) throw falla_('No encontramos ese mes en la hoja Fuentes.');
     conBloqueo_(() => escribirFuente_(f, { activo: !!activo, estado: activo ? f.estado : 'Pausada: se conserva la última copia' }));
@@ -283,7 +352,7 @@ function apiActivarFuente(token, mes, activo) {
 
 function apiSincronizacionAutomatica(token, activar) {
   return responder_(() => {
-    sesion_(token, { admin: true });
+    sesion_(token, { seccion: 'cargar', nivel: 2 });
     ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'sincronizacionProgramada').forEach(t => ScriptApp.deleteTrigger(t));
     if (activar) ScriptApp.newTrigger('sincronizacionProgramada').timeBased().everyHours(1).create();
     return !!activar;

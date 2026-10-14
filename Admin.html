@@ -12,6 +12,32 @@ function estadoFuente(f){
   if(/^ok/i.test(f.estado)) return `<span class="pill good"><i></i>Sincronizada</span>`;
   return `<span class="pill warn"><i></i>Pendiente</span>`;
 }
+/* Cambiar el Google Sheet de un mes conectado. El ID y el gid del enlace indican archivo y pestaña. */
+function partesEnlace(u){ u=String(u||"").trim(); const id=(u.match(/\/d\/([a-zA-Z0-9_-]{20,})/)||[])[1]||(/^[a-zA-Z0-9_-]{20,}$/.test(u)?u:""); const gid=(u.match(/[#&?]gid=(\d+)/)||[])[1]||""; return {id,gid}; }
+function abrirEditarFuente(mes){
+  const f=(S.fuentes&&S.fuentes.fuentes||[]).find(x=>x.mes===mes); if(!f) return;
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="feT" style="max-width:600px"><h2 id="feT">Cambiar el Google Sheet de ${esc(mesLargo(mes))}</h2>
+    <p class="hint">Actual: <b>${esc(f.archivo||"—")}</b>. Pega el enlace correcto: el archivo y la pestaña se toman del enlace (ID y gid), así que no importa cómo se llame la hoja.</p>
+    <form id="fFe" class="stack" style="gap:10px" novalidate>
+      <div class="field"><label for="feUrl">Enlace del Google Sheet</label><input class="input" id="feUrl" value="${esc(f.enlace)}" autocomplete="off"></div>
+      <div class="fe-det" id="feDet"></div>
+      <div class="grid2e" style="gap:10px"><div class="field"><label for="feMes">Mes</label><input class="input" type="month" id="feMes" value="${esc(mes)}"><p class="hint">Cámbialo solo si el mes también estaba mal; la copia del mes anterior se elimina.</p></div>
+        <div class="field" id="feHojaF"><label for="feHoja">Hoja</label><input class="input" id="feHoja" placeholder="Se detecta sola"><p class="hint">Solo hace falta si el enlace no trae gid.</p></div></div>
+      <p class="err" id="feErr"></p>
+      <div class="row"><button class="btn primary" type="submit" id="feBtn">Leer y reemplazar</button><button class="btn" type="button" id="feX">Cancelar</button></div></form></div>`;
+  document.body.appendChild(sc);
+  const close=()=>sc.remove(); sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#feX",sc).onclick=close;
+  const det=()=>{ const p=partesEnlace($("#feUrl",sc).value);
+    $("#feDet",sc).innerHTML=p.id?`<span class="pill info">ID ${esc(p.id.slice(0,10))}…${esc(p.id.slice(-6))}</span> ${p.gid?`<span class="pill good">Pestaña gid ${esc(p.gid)}</span>`:`<span class="pill warn">Sin gid: se usa la hoja indicada, “ROL INS” o la del mes</span>`}`:`<span class="pill crit">El enlace no tiene un ID de Google Sheet</span>`;
+    $("#feHojaF",sc).style.display=p.gid?"none":""; };
+  $("#feUrl",sc).oninput=det; det();
+  $("#fFe",sc).onsubmit=async e=>{ e.preventDefault(); const b=$("#feBtn",sc); setCargando(b,true,"Leyendo el Google Sheet…");
+    try{ const r=await api("apiEditarFuente",S.token,mes,$("#feUrl",sc).value,$("#feMes",sc).value,$("#feHoja",sc).value);
+      close(); toast(`${mesLargo(r.mes)}: ${r.archivo} · ${r.hoja} (${r.instructores} instructores)`); S.fuentes=null; await recargar(); render(); }
+    catch(err){ setCargando(b,false); $("#feErr",sc).textContent=err.message; } };
+  setTimeout(()=>{ const i=$("#feUrl",sc); i.focus(); i.select(); },30);
+}
 function admCargar(){
   if(!S.fuentes){ cargarFuentes(); return `<div class="loading" style="min-height:30vh"><span class="spin"></span><span>Leyendo la hoja Fuentes…</span></div>`; }
   if(S.fuentes.error) return `<div class="card empty-state"><h3>No pudimos leer las fuentes</h3><p class="hint">${esc(S.fuentes.error)}</p><button class="btn" data-act="recargarFuentes">Reintentar</button></div>`;
@@ -33,11 +59,13 @@ function admCargar(){
     <div class="card stack" style="gap:12px">
       <div class="row between"><div><h3>Google Sheets conectados</h3><p class="hint">Cada sincronización guarda una copia del mes en la hoja Roles. Editar el Google Sheet no cambia la app hasta sincronizar.</p></div>
         <div class="row"><label class="toggle"><input type="checkbox" id="autoSync" ${F.automatica?"checked":""}> Sincronizar cada hora</label><button class="btn" data-act="sincTodo" ${filas.some(f=>f.activo)?"":"disabled"}>Sincronizar todo</button></div></div>
-      ${filas.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Mes</th><th>Archivo</th><th>Estado</th><th>Última lectura</th><th>Instr.</th><th></th></tr></thead><tbody>
+      ${filas.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Mes</th><th>Archivo</th><th>Estado</th><th>Para instructores</th><th>Última lectura</th><th>Instr.</th><th></th></tr></thead><tbody>
         ${filas.map(f=>`<tr><td><b>${f.mes?mesLargo(f.mes):"—"}</b></td><td>${esc(f.archivo||"Sin leer")}<span class="sm2">${f.hoja?"Hoja "+esc(f.hoja):"Hoja detectada automáticamente"}</span></td>
           <td>${estadoFuente(f)}${f.estado&&!/^ok$/i.test(f.estado)?`<span class="sm2" style="max-width:300px;white-space:normal">${esc(f.estado)}</span>`:""}</td>
+          <td>${(()=>{ const m=F.meses.find(x=>x.mes===f.mes); if(!m) return `<span class="sm2">Sin copia</span>`;
+            return `${m.oculto?`<span class="pill warn"><i></i>Oculto</span>`:`<span class="pill good"><i></i>Publicado</span>`}<button class="btn sm link-btn" data-ocultar="${esc(f.mes)}" data-vis="${m.oculto?1:0}" title="${m.oculto?"Los instructores podrán ver este mes y proponer intercambios":"Los instructores dejan de ver este mes; coordinación lo sigue viendo"}">${m.oculto?"Publicar":"Ocultar"}</button>`; })()}</td>
           <td>${f.ultima?fechaLarga(f.ultima):"—"}</td><td class="num">${f.instructores||"—"}</td>
-          <td class="acts"><a class="btn sm" href="${esc(f.enlace)}" target="_blank" rel="noopener">Abrir</a> ${f.activo?`<button class="btn sm" data-sinc="${esc(f.mes)}">Sincronizar</button> <button class="btn sm" data-pausa="${esc(f.mes)}" data-on="0">Pausar</button>`:`<button class="btn sm" data-pausa="${esc(f.mes)}" data-on="1">Reanudar</button>`}</td></tr>`).join("")}
+          <td class="acts"><a class="btn sm" href="${esc(f.enlace)}" target="_blank" rel="noopener">Abrir</a> <button class="btn sm" data-fedit="${esc(f.mes)}">Editar</button> ${f.activo?`<button class="btn sm" data-sinc="${esc(f.mes)}">Sincronizar</button> <button class="btn sm" data-pausa="${esc(f.mes)}" data-on="0">Pausar</button>`:`<button class="btn sm" data-pausa="${esc(f.mes)}" data-on="1">Reanudar</button>`}</td></tr>`).join("")}
       </tbody></table></div>`:`<p class="empty">Todavía no hay Google Sheets conectados.</p>`}
     </div>
 
@@ -51,7 +79,7 @@ function admCargar(){
           <p class="hint">${MO.orden.includes(pv.mes)?`Ya existe ${mesLargo(pv.mes)}: al publicarlo lo reemplazas.`:`${mesLargo(pv.mes)} es un mes nuevo.`}${conFuente.has(pv.mes)?" Ese mes se lee de un Google Sheet: se pausará esa conexión.":""}</p>
           <div class="row"><button class="btn primary" id="pubX">Publicar rol</button><button class="btn" id="descX">Descartar</button></div></div>`:""}
       </div>
-      <div class="card"><h3 style="margin-bottom:6px">Meses disponibles en la app</h3><div class="fl">${F.meses.slice().reverse().map(m=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${mesLargo(m.mes)}</span><br><span class="m">${esc(m.fuente||"")}${m.hoja?" · "+esc(m.hoja):""}${m.actualizadoAt?" · "+fechaLarga(m.actualizadoAt):""}</span></span><span class="row" style="gap:6px"><span class="pill ${m.origen==="Google Sheet"?"info":m.origen==="Excel"?"acc":""}">${esc(m.origen||"Copia inicial")}</span><span class="pill">${m.instructores}</span></span></div>`).join("")||`<p class="empty">Sin meses cargados.</p>`}</div></div>
+      <div class="card"><h3 style="margin-bottom:6px">Meses disponibles en la app</h3><p class="hint" style="margin-bottom:6px">Un mes oculto no lo ven los instructores (ni pueden proponer intercambios en él) hasta que lo muestres.</p><div class="fl">${F.meses.slice().reverse().map(m=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${mesLargo(m.mes)}</span><br><span class="m">${esc(m.fuente||"")}${m.hoja?" · "+esc(m.hoja):""}${m.actualizadoAt?" · "+fechaLarga(m.actualizadoAt):""}</span></span><span class="row" style="gap:6px">${m.oculto?`<span class="pill warn">Oculto</span>`:""}<span class="pill ${m.origen==="Google Sheet"?"info":m.origen==="Excel"?"acc":""}">${esc(m.origen||"Copia inicial")}</span><span class="pill">${m.instructores}</span><button class="btn sm" data-ocultar="${esc(m.mes)}" data-vis="${m.oculto?1:0}" title="${m.oculto?"Los instructores podrán ver este mes y proponer intercambios":"Los instructores dejan de ver este mes; coordinación lo sigue viendo"}">${m.oculto?"Mostrar a instructores":"Ocultar a instructores"}</button></span></div>`).join("")||`<p class="empty">Sin meses cargados.</p>`}</div></div>
     </div>
   </div>`;
 }
@@ -95,7 +123,7 @@ function resultadoSync(res){
 /* ---------- Usuarios y accesos ---------- */
 async function cargarUsuarios(){
   if(S.admCargando) return; S.admCargando=true;
-  try{ S.adm=await api("apiUsuarios",S.token); }catch(e){ S.adm={error:e.message}; }
+  try{ const [adm,perf]=await Promise.all([api("apiUsuarios",S.token), api("apiPerfiles",S.token)]); S.adm=adm; S.adm.perf=perf; const me=S.adm.usuarios.find(x=>x.bp===S.usuario.bp); if(me){ S.usuario.foto=me.foto; S.usuario.cargo=me.cargo; S.usuario.area=me.area; pintarCabecera(); } }catch(e){ S.adm={error:e.message}; }
   S.admCargando=false; if(S.tab==="usuarios") render();
 }
 function admUsuarios(){
@@ -107,28 +135,105 @@ function admUsuarios(){
   const lista=U.filter(u=>pasa(u)&&(!q||norm(u.nombre+" "+u.nombreCompleto+" "+u.correo).includes(q)||u.bp.includes(q))).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));
   const activos=U.filter(u=>u.activo&&u.rol);
   return `<div class="stack">
-    <div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+    <div class="kpis k4">
       <div class="kpi"><span class="l">Usuarios activos</span><span class="v num">${activos.length}</span><span class="d">${activos.filter(u=>u.rol==="admin").length} de coordinación</span></div>
       <div class="kpi"><span class="l">Cuentas activadas</span><span class="v num">${activos.filter(u=>u.cuenta==="activa").length}<small> de ${activos.length}</small></span><div class="meter"><span style="flex:${activos.filter(u=>u.cuenta==="activa").length};background:var(--good)"></span><span style="flex:${activos.filter(u=>u.cuenta!=="activa").length};background:var(--line-2)"></span></div></div>
       <div class="kpi"><span class="l">Códigos vigentes</span><span class="v num">${U.filter(u=>u.codigoVence).length}</span><span class="d">Cada código vence 48 h después de generarse</span></div>
       <div class="kpi"><span class="l">Bloqueados ahora</span><span class="v num">${U.filter(u=>u.bloqueado).length}</span><span class="d">Por intentos fallidos</span></div>
     </div>
     <div class="card stack" style="gap:12px">
-      <div class="row between"><div><h3>Accesos</h3><p class="hint">Quién entra y con qué rol se define en la hoja <b>Usuarios</b> (columnas Rol y Activo). Aquí generas el código para el primer ingreso o para restablecer una contraseña.</p></div>
-        <div class="row">${S.adm.baseUrl?`<a class="btn sm" href="${esc(S.adm.baseUrl)}" target="_blank" rel="noopener">Abrir hoja Usuarios</a>`:""}<button class="btn sm" data-act="recargarUsuarios">Actualizar</button></div></div>
+      <div class="row between"><div><h3>Accesos</h3><p class="hint">Quién entra y con qué rol se define en la hoja <b>Usuarios</b> (columnas Rol y Activo). Los instructores vienen del escalafón; los administradores se crean aquí. Aquí también generas el código para el primer ingreso o para restablecer una contraseña.</p></div>
+        <div class="row">${S.adm.puedoGestionar?`<button class="btn sm primary" data-nuevoadm="1">Nuevo administrador</button>`:""}<button class="btn sm" data-syncperf="1" title="Trae cargo, área y foto del directorio corporativo para quienes tienen correo">Sincronizar perfiles</button>${S.adm.baseUrl?`<a class="btn sm" href="${esc(S.adm.baseUrl)}" target="_blank" rel="noopener">Abrir hoja Usuarios</a>`:""}<button class="btn sm" data-act="recargarUsuarios">Actualizar</button></div></div>
+      ${(S.adm.principalesFaltantes||[]).length?`<div class="msg err">El BP ${esc(S.adm.principalesFaltantes.join(", "))} está configurado como administrador principal pero no existe en la hoja Usuarios.${S.adm.soyPrincipal?" Créalo con “Nuevo administrador”.":""}</div>`:""}
       <div class="row between"><div class="chips">${filtros.map(([k,l,c])=>`<button class="chip" aria-pressed="${S.filtroU===k}" data-filu="${k}">${l} <span class="num">${c}</span></button>`).join("")}</div>
         <input class="input" id="buscaU" placeholder="Buscar nombre, BP o correo" value="${esc(S.buscaU)}" style="max-width:260px" autocomplete="off"></div>
       ${lista.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Persona</th><th>Rol</th><th>Cuenta</th><th>Último ingreso</th><th>Fallidos</th><th></th></tr></thead><tbody>
       ${lista.map(u=>{ const ok=u.activo&&u.rol;
         const cuenta=!ok?`<span class="pill">${!u.activo?"Inactivo":"Sin rol"}</span>`: u.bloqueado?`<span class="pill crit"><i></i>Bloqueado</span>`: u.cuenta==="activa"?`<span class="pill good"><i></i>Activa</span>`:`<span class="pill warn"><i></i>Sin activar</span>`;
-        return `<tr><td><b>${esc(u.nombre)}</b><span class="sm2 mono">BP ${esc(u.bp)}</span>${u.correo?`<span class="sm2">${esc(u.correo)}</span>`:`<span class="sm2">Sin correo</span>`}</td>
-          <td><span class="pill ${u.rol==="admin"?"acc":u.rol==="inst"?"info":""}">${esc(u.rolTxt)}</span></td>
+        const yo=u.bp===S.adm.miBp, protegido=!u.administrable;
+        const acciones = protegido ? `<span class="hint" title="${u.principal?"Solo él puede restablecer su acceso o cerrar sus sesiones":"Tiene más permisos que tu perfil"}">Protegido</span>`
+          : `${ok?`<button class="btn sm" data-codigo="${esc(u.bp)}">${u.cuenta==="activa"?"Restablecer":"Generar código"}</button> <button class="btn sm" data-cerrar="${esc(u.bp)}" title="Cierra todas sus sesiones abiertas">Cerrar sesiones</button>`:S.adm.puedoGestionar?"":`<span class="hint">Actívalo en la hoja</span>`}${S.adm.puedoGestionar&&!u.principal&&!yo?` <button class="btn sm" data-activ="${esc(u.bp)}" data-on="${u.activo?0:1}">${u.activo?"Desactivar":"Activar"}</button>`:""}`;
+        const P=S.adm.perf, editable=P&&S.adm.puedoGestionar&&u.rol==="admin"&&!u.principal&&!yo&&u.administrable;
+        const perfilCel = u.rol!=="admin" ? "" : editable
+          ? `<select class="input perf-sel" data-perfil="${esc(u.bp)}" aria-label="Perfil de ${esc(u.nombre)}">${P.perfiles.map(p=>`<option value="${esc(p.nombre)}" ${p.nombre===u.perfil?"selected":""} ${perfilExcede(p)?"disabled":""}>${esc(p.nombre)}</option>`).join("")}</select>`
+          : `<span class="sm2">${esc(u.perfil||"")}</span>`;
+        return `<tr><td><div class="persona">${avatarHTML(u)}<div><b>${esc(u.nombre)}</b><span class="sm2 mono">BP ${esc(u.bp)}</span>${u.cargo||u.area?`<span class="sm2">${esc([u.cargo,u.area].filter(Boolean).join(" · "))}</span>`:""}${u.correo?`<span class="sm2">${esc(u.correo)}</span>`:`<span class="sm2">Sin correo</span>`}</div></div></td>
+          <td><span class="pill ${u.rol==="admin"?"acc":u.rol==="inst"?"info":""}">${u.principal?LOCK_SVG:""}${esc(u.rolTxt)}</span>${perfilCel}</td>
           <td>${cuenta}${u.codigoVence?`<span class="sm2">Código vigente hasta ${fechaCorta(u.codigoVence)}</span>`:""}</td>
           <td>${u.ultimoIngreso?fechaLarga(u.ultimoIngreso):"Nunca"}<span class="sm2">${u.ingresos} ingreso${u.ingresos===1?"":"s"}</span></td>
           <td class="num">${u.fallidos}</td>
-          <td class="acts">${ok?`<button class="btn sm" data-codigo="${esc(u.bp)}">${u.cuenta==="activa"?"Restablecer":"Generar código"}</button> <button class="btn sm" data-cerrar="${esc(u.bp)}" title="Cierra todas sus sesiones abiertas">Cerrar sesiones</button>`:`<span class="hint">Actívalo en la hoja</span>`}</td></tr>`; }).join("")}
+          <td class="acts">${acciones}</td></tr>`; }).join("")}
       </tbody></table></div>`:`<p class="empty">Nadie coincide con el filtro.</p>`}
-    </div></div>`;
+    </div>
+    ${perfilesCardHTML()}</div>`;
+}
+/* ---------- Perfiles de acceso ---------- */
+const NIV_TXT=["Sin acceso","Ver","Gestionar"], NIV_CLS=["","info","good"];
+/* ¿El perfil da más de lo que tengo? (no lo puedo asignar ni editar) */
+function perfilExcede(p){ const P=S.adm&&S.adm.perf; if(!P||P.soyPrincipal) return false; return P.secciones.some(([k])=>(p.niveles[k]||0)>(P.misNiveles[k]||0)); }
+function perfilesCardHTML(){
+  const P=S.adm.perf; if(!P) return "";
+  const usos=n=>S.adm.usuarios.filter(u=>u.rol==="admin"&&!u.principal&&u.perfil===n).length;
+  return `<div class="card stack" style="gap:12px">
+    <div class="row between"><div><h3>Perfiles de acceso</h3><p class="hint">Qué puede hacer cada administrador, sección por sección: <b>Sin acceso</b> (no la ve), <b>Ver</b> (solo consulta) o <b>Gestionar</b> (aprueba y edita). Los administradores principales siempre tienen todo. Nadie puede otorgar más acceso del que tiene.</p></div>
+      ${S.adm.puedoGestionar?`<button class="btn sm primary" data-perfnuevo="1">Nuevo perfil</button>`:""}</div>
+    <div class="dt-wrap"><table class="dt perf-dt"><thead><tr><th>Perfil</th>${P.secciones.map(([k,n])=>`<th title="${esc(n)}">${esc(n)}</th>`).join("")}<th></th></tr></thead><tbody>
+      ${P.perfiles.map(p=>`<tr><td><b>${esc(p.nombre)}</b><span class="sm2">${esc(p.descripcion||"")}</span><span class="sm2">${plural(usos(p.nombre),"administrador","administradores")}</span></td>
+        ${P.secciones.map(([k])=>`<td><span class="niv n${p.niveles[k]||0}" title="${NIV_TXT[p.niveles[k]||0]}">${NIV_TXT[p.niveles[k]||0]}</span></td>`).join("")}
+        <td class="acts">${S.adm.puedoGestionar&&!perfilExcede(p)?`<button class="btn sm" data-perfedit="${esc(p.nombre)}">Editar</button>`:""}</td></tr>`).join("")}
+    </tbody></table></div></div>`;
+}
+function abrirPerfil(nombre){
+  const P=S.adm.perf, p=nombre?P.perfiles.find(x=>x.nombre===nombre):{nombre:"",descripcion:"",niveles:{}};
+  if(!p) return;
+  const tope=k=>P.soyPrincipal?2:(P.misNiveles[k]||0);
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pfT" style="max-width:620px">
+    <h2 id="pfT">${nombre?"Editar perfil":"Nuevo perfil"}</h2>
+    <form id="fPf" class="stack" style="gap:12px" novalidate>
+      <div class="grid2e" style="gap:10px"><div class="field"><label for="pfN">Nombre</label><input class="input" id="pfN" value="${esc(p.nombre)}" placeholder="Ej.: Supervisor de vacaciones" maxlength="60"></div>
+        <div class="field"><label for="pfD">Descripción</label><input class="input" id="pfD" value="${esc(p.descripcion||"")}" maxlength="200"></div></div>
+      <div class="perf-ed">${P.secciones.map(([k,n])=>`<div class="perf-ed-r"><span>${esc(n)}</span><div class="seg" role="radiogroup" aria-label="${esc(n)}">${[0,1,2].map(v=>`<button type="button" data-k="${k}" data-v="${v}" aria-pressed="${(p.niveles[k]||0)===v}" ${v>tope(k)?"disabled title=\"Tu perfil no permite otorgar este nivel\"":""}>${NIV_TXT[v]}</button>`).join("")}</div></div>`).join("")}</div>
+      <p class="hint">“Gestionar” en Usuarios y accesos permite crear perfiles y asignarlos, siempre sin superar el propio acceso.</p>
+      <p class="err" id="pfErr"></p>
+      <div class="row between"><div class="row"><button class="btn primary" type="submit" id="pfBtn">Guardar perfil</button><button class="btn" type="button" id="pfX">Cancelar</button></div>
+        ${nombre&&nombre!=="Coordinación completa"?`<button class="btn danger" type="button" id="pfDel">Eliminar</button>`:""}</div></form></div>`;
+  document.body.appendChild(sc);
+  const niv={...p.niveles}; const close=()=>sc.remove();
+  sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#pfX",sc).onclick=close;
+  sc.querySelectorAll("[data-k]").forEach(b=>b.onclick=()=>{ niv[b.dataset.k]=Number(b.dataset.v); sc.querySelectorAll(`[data-k="${b.dataset.k}"]`).forEach(x=>x.setAttribute("aria-pressed",x===b?"true":"false")); });
+  $("#fPf",sc).onsubmit=async e=>{ e.preventDefault(); const b=$("#pfBtn",sc); setCargando(b,true,"Guardando…");
+    try{ await api("apiGuardarPerfil",S.token,{original:nombre||"",nombre:$("#pfN",sc).value,descripcion:$("#pfD",sc).value,niveles:niv}); close(); toast("Perfil guardado"); S.adm=null; render(); }
+    catch(err){ setCargando(b,false); $("#pfErr",sc).textContent=err.message; } };
+  const del=$("#pfDel",sc); if(del) del.onclick=async()=>{ if(!confirm(`¿Eliminar el perfil “${nombre}”?`)) return; setCargando(del,true,"…");
+    try{ await api("apiEliminarPerfil",S.token,nombre); close(); toast("Perfil eliminado"); S.adm=null; render(); }
+    catch(err){ setCargando(del,false); $("#pfErr",sc).textContent=err.message; } };
+  setTimeout(()=>$("#pfN",sc).focus(),30);
+}
+const LOCK_SVG=`<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true" style="margin-right:2px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
+/* Foto corporativa si existe; si no carga, quedan las iniciales */
+function avatarHTML(u){
+  const ini=String(u.nombre||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  return `<span class="avatar">${esc(ini)}${u.foto?`<img src="${esc(u.foto)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">`:""}</span>`;
+}
+function abrirNuevoAdmin(){
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="naT"><h2 id="naT">Nuevo administrador</h2>
+    <p class="hint">Su acceso depende del perfil que elijas. Después de crearlo, genérale el código de primer ingreso. Los instructores no se crean aquí: vienen del escalafón.</p>
+    <form id="fNa" class="stack" style="gap:10px" autocomplete="off" novalidate>
+      <div class="grid2e" style="gap:10px"><div class="field"><label for="naBp">BP</label><input class="input mono" id="naBp" inputmode="numeric" required></div><div class="field"><label for="naNom">Nombre corto</label><input class="input" id="naNom" placeholder="Ej.: Jorge Pérez" required></div></div>
+      <div class="field"><label for="naComp">Nombre completo</label><input class="input" id="naComp" placeholder="Como figura en dotación"></div>
+      <div class="field"><label for="naPerf">Perfil de acceso</label><select class="input" id="naPerf">${(S.adm.perf?S.adm.perf.perfiles:[{nombre:"Coordinación completa",niveles:{}}]).map(p=>`<option ${perfilExcede(p)?"disabled":""}>${esc(p.nombre)}</option>`).join("")}</select></div>
+      <div class="field"><label for="naMail">Correo corporativo</label><input class="input" id="naMail" type="email" placeholder="nombre.apellido@latam.com"><p class="hint">Con correo puede recibir su código y entrar con Google, y se sincroniza su foto.</p></div>
+      <p class="err" id="naErr"></p>
+      <div class="row"><button class="btn primary" type="submit" id="naBtn">Crear administrador</button><button class="btn" type="button" id="naX">Cancelar</button></div></form></div>`;
+  document.body.appendChild(sc);
+  const close=()=>sc.remove(); sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#naX",sc).onclick=close;
+  $("#fNa",sc).onsubmit=async e=>{ e.preventDefault(); const b=$("#naBtn",sc); setCargando(b,true,"Creando…");
+    try{ const r=await api("apiCrearAdmin",S.token,{bp:$("#naBp",sc).value,nombre:$("#naNom",sc).value,nombreCompleto:$("#naComp",sc).value,correo:$("#naMail",sc).value,perfil:$("#naPerf",sc).value});
+      close(); toast(`${r.nombre} creado como administrador`); S.adm=null; render(); }
+    catch(err){ setCargando(b,false); $("#naErr",sc).textContent=err.message; } };
+  setTimeout(()=>$("#naBp",sc).focus(),30);
 }
 function abrirGenerarCodigo(bp){
   const u=S.adm.usuarios.find(x=>x.bp===bp); if(!u) return;
