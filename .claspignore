@@ -7,3 +7,6 @@
 fuentes/**
 .git/**
 **/node_modules/**
+subir.sh
+.clasp*.json
+*.bak

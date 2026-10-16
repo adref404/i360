@@ -157,6 +157,7 @@ function apiVistaRepintar(token, mes) {
 function apiRepintarMes(token, mes) {
   return responder_(() => {
     const yo = sesion_(token, { seccion: 'colores', nivel: 2 }).u;
+    if (enPrueba_() && !pruebaEscribeRol_()) throw falla_('Ambiente de prueba: no se repinta el Google Sheet real del mes. Para probarlo, conecta una copia del Sheet y pon PRUEBA_ESCRIBIR = SI.');
     return conBloqueo_(() => {
       const r = repintado_(mesTxt_(mes), true);
       registrar_(yo, 'Mes repintado con el catálogo', mes + ' · ' + r.cambios + ' celdas', '');

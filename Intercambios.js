@@ -331,6 +331,7 @@ function aplicarIntercambio_(x, yo) {
   const f = leerFuentes_().find(z => z.mes === x.mes && z.activo && z.id);
   const n = x.dias.length, d0 = x.dias[0];
   if (!f) return aplicarEnCopia_(x);
+  if (enPrueba_() && !pruebaEscribeRol_()) return 'Ambiente de prueba: no se escribió en el Google Sheet del mes. ' + aplicarEnCopia_(x);
   let ss;
   try { ss = SpreadsheetApp.openById(f.id); } catch (e) { throw falla_('No se pudo abrir el Google Sheet de ' + x.mes + '. La cuenta dueña del script necesita permiso de edición.'); }
   const sh = elegirHoja_(ss, f.hoja, f.gid, f.mes);
@@ -427,10 +428,12 @@ function notificarInt_(id, evento, sumar, accion) {
       '<p style="color:#6C6893;font-size:12px;margin-top:18px">Las decisiones se toman en la app. Responder este correo no cambia el intercambio.</p></div>';
     const texto = evento + (accion ? '\n' + accion : '') + (urlApp_() ? '\n\n' + urlApp_() : '') + '\n\nLas decisiones se toman en la app.';
     let nuevo = null;
-    try { nuevo = enviarGmailHilo_(dest, asunto, html, texto, h); }
+    const cp = correoPrueba_(dest, asunto, html, texto); // en el ambiente de prueba, solo a quien prueba
+    if (!cp.dest.length) return;
+    try { nuevo = enviarGmailHilo_(cp.dest, cp.asunto, cp.html, cp.texto, h); }
     catch (e) {
       console.warn('Hilo de Gmail no disponible, se envía sin hilo: ' + e.message);
-      MailApp.sendEmail({ to: dest.join(','), subject: asunto, htmlBody: html, body: texto, name: CONFIG.nombreApp });
+      MailApp.sendEmail({ to: cp.dest.join(','), subject: cp.asunto, htmlBody: cp.html, body: cp.texto, name: CONFIG.nombreApp });
     }
     escribirFila_(hojaInt_(), x.fila, { 'Hilo correo': JSON.stringify(Object.assign({}, h, nuevo || {}, { dest: dest })) });
   } catch (e) { console.warn('Correo de intercambio no enviado: ' + e.message); }
@@ -481,7 +484,7 @@ function correoIntercambio_(usuarios, asunto, texto, detalleHtml, accion) {
   if (!dest.length) return;
   const url = urlApp_();
   try {
-    MailApp.sendEmail({
+    enviarCorreo_({
       to: dest.join(','), subject: CONFIG.nombreApp + ': ' + asunto, name: CONFIG.nombreApp,
       body: texto + (accion ? '\n\n' + accion : '') + (url ? '\n\n' + url : ''),
       htmlBody: '<p>' + escHtml_(texto) + '</p>' + (detalleHtml || '') + (accion ? '<p>' + escHtml_(accion) + '</p>' : '') + (url ? '<p><a href="' + url + '">Abrir la aplicación</a></p>' : '')

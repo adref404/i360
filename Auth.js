@@ -200,7 +200,7 @@ function generarCodigo_(u, quien) {
 
 function enviarCodigoPorCorreo_(u, codigo, vence) {
   const venceTxt = Utilities.formatDate(new Date(vence), CONFIG.zona, "dd/MM/yyyy 'a las' HH:mm");
-  MailApp.sendEmail({
+  enviarCorreo_({
     to: u.correo,
     subject: CONFIG.nombreApp + ': tu código de acceso',
     body: 'Hola ' + nombreDe_(u) + ',\n\nTu código de acceso es: ' + codigo + '\n\n' +

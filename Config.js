@@ -121,8 +121,9 @@ function doGet(e) {
   t.logoBarra = logoHtml_('simbolo', 'tema');
   t.nombreApp = CONFIG.nombreApp;
   t.fondo = CONFIG.fondoInicioUrl || '';
+  t.prueba = enPrueba_();
   const out = t.evaluate()
-    .setTitle(CONFIG.nombreApp)
+    .setTitle((t.prueba ? '[PRUEBA] ' : '') + CONFIG.nombreApp)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
   if (CONFIG.permitirIframe) out.setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   return out;
@@ -142,7 +143,7 @@ function logoHtml_(tipo, modo) {
 
 /** Revisa la instalación paso a paso. Solo muestra conteos y estados, nunca nombres ni contraseñas. */
 function diagnostico_() {
-  const L = [CONFIG.nombreApp + ' · diagnóstico · versión ' + VERSION_APP, 'Fecha del servidor: ' + new Date().toISOString(), ''];
+  const L = [CONFIG.nombreApp + ' · diagnóstico · versión ' + VERSION_APP + (enPrueba_() ? ' · AMBIENTE DE PRUEBA' : ''), 'Fecha del servidor: ' + new Date().toISOString(), ''];
   const paso = (nombre, fn) => { try { L.push('OK    ' + nombre + (function (r) { return r ? ' — ' + r : ''; })(fn())); } catch (err) { L.push('ERROR ' + nombre + ' — ' + (err && err.message)); } };
   paso('Archivo HTML "Index"', () => { const c = HtmlService.createHtmlOutputFromFile('Index').getContent(); if (c.indexOf("include('VacacionesVista')") < 0 || c.indexOf('Index v' + VERSION_APP) < 0) throw new Error('es una versión anterior; vuelve a copiarlo desde el zip v' + VERSION_APP); return Math.round(c.length / 1024) + ' KB'; });
   ARCHIVOS_HTML_.forEach(n => paso('Archivo HTML "' + n + '"', () => revisarArchivoHtml_(n)));

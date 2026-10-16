@@ -123,6 +123,8 @@ function yaResuelto_(que, accion, quien, cuando) {
 
 /** Dirección de la app para los correos: CONFIG.appUrl o, si falta, la del despliegue actual. */
 function urlApp_() {
+  // En el ambiente de prueba, los botones de los correos abren la app de prueba (nunca la real)
+  if (enPrueba_()) { const u = String(props_().getProperty('PRUEBA_URL') || ''); if (u) return u; try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; } }
   if (CONFIG.appUrl) return CONFIG.appUrl;
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
 }
@@ -162,4 +164,33 @@ function soloEditor_() {
   const a = Session.getActiveUser().getEmail();
   const e = Session.getEffectiveUser().getEmail();
   if (!a || a !== e) throw new Error('Esta función solo puede ejecutarse desde el editor de Apps Script por la cuenta dueña.');
+}
+
+/* ---------------- Ambiente de prueba ----------------
+ * Se activa SOLO en el proyecto de prueba con la propiedad del script MODO = PRUEBA.
+ * El código es el mismo en ambos proyectos; el real no tiene esa propiedad.
+ *  - Correos: llegan solo a PRUEBA_CORREO (o al dueño del script), con "[PRUEBA]" y a quién habrían llegado.
+ *  - Rol del mes: los intercambios aprobados se aplican solo en la copia de la app (hoja Roles) y no se repinta
+ *    el Google Sheet, salvo que la propiedad PRUEBA_ESCRIBIR = SI (útil con copias de los Sheets de los meses).
+ */
+function enPrueba_() { try { return String(props_().getProperty('MODO') || '').trim().toUpperCase() === 'PRUEBA'; } catch (e) { return false; } }
+function pruebaEscribeRol_() { return String(props_().getProperty('PRUEBA_ESCRIBIR') || '').trim().toUpperCase() === 'SI'; }
+function correoPrueba_(dest, asunto, html, texto) {
+  dest = [].concat(dest || []).map(String).filter(Boolean);
+  if (!enPrueba_()) return { dest: dest, asunto: asunto, html: html, texto: texto };
+  let a = String(props_().getProperty('PRUEBA_CORREO') || '');
+  if (!a) try { a = Session.getEffectiveUser().getEmail(); } catch (e) { a = ''; }
+  const lista = dest.join(', ') || '(nadie)';
+  return {
+    dest: a.split(/[,;\s]+/).filter(Boolean), asunto: '[PRUEBA] ' + asunto,
+    html: '<div style="background:#FFF4D6;border:1px solid #E8B200;border-radius:8px;padding:8px 12px;margin-bottom:12px;font:13px Arial,sans-serif;color:#5C4500">' +
+      '<b>Ambiente de prueba.</b> En la app real este correo habría llegado a: ' + escHtml_(lista) + '</div>' + (html || ''),
+    texto: '[PRUEBA] En la app real habría llegado a: ' + lista + '\n\n' + (texto || '')
+  };
+}
+/** MailApp.sendEmail que respeta el ambiente de prueba. */
+function enviarCorreo_(o) {
+  const c = correoPrueba_(String(o.to || '').split(','), o.subject, o.htmlBody || '', o.body || '');
+  if (!c.dest.length) return;
+  MailApp.sendEmail(Object.assign({}, o, { to: c.dest.join(','), subject: c.asunto, htmlBody: c.html, body: c.texto }));
 }
