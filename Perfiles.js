@@ -11,7 +11,7 @@
  */
 
 const SECCIONES_ADM_ = [
-  ['ind', 'Indicadores'], ['seg', 'Seguimiento del mes'], ['rol', 'Rol completo'], ['dia', 'Equipo por día'],
+  ['ind', 'Indicadores'], ['rol', 'Rol completo'], ['dia', 'Equipo por día'],
   ['inst', 'Por instructor'], ['vac', 'Vacaciones'], ['int', 'Intercambios'], ['cargar', 'Actualizar rol'],
   ['colores', 'Tipos y colores'], ['usuarios', 'Usuarios y accesos']
 ];
@@ -19,8 +19,8 @@ const NIVEL_TXT_ = ['Sin acceso', 'Ver', 'Gestionar'];
 const PERFIL_DEF_ = 'Coordinación completa';
 const ENC_PERFILES_ = ['Perfil', 'Descripción'].concat(SECCIONES_ADM_.map(s => s[1]));
 const PERFILES_INICIALES_ = [
-  [PERFIL_DEF_, 'Ve y gestiona todo el panel de coordinación.', 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
-  ['Solo lectura', 'Ve el panel completo sin poder aprobar, editar ni cambiar accesos.', 1, 1, 1, 1, 1, 1, 1, 0, 1, 0]
+  [PERFIL_DEF_, 'Ve y gestiona todo el panel de coordinación.', 2, 2, 2, 2, 2, 2, 2, 2, 2],
+  ['Solo lectura', 'Ve el panel completo sin poder aprobar, editar ni cambiar accesos.', 1, 1, 1, 1, 1, 1, 0, 1, 0]
 ];
 
 const nivelDeTexto_ = t => { const n = normTxt_(t); return /^gest/.test(n) ? 2 : /^ver/.test(n) ? 1 : 0; };

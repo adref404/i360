@@ -23,14 +23,14 @@ const CONFIG = {
   baseId: '',
 
   zona: 'America/Lima',
-  nombreApp: 'INS 360',
+  nombreApp: 'i360',
 
-  // Dirección de la aplicación (implementación /exec). Se usa en el botón "Abrir INS 360" de los correos.
+  // Dirección de la aplicación (implementación /exec). Se usa en el botón "Abrir i360" de los correos.
   appUrl: 'https://script.google.com/a/macros/latam.com/s/AKfycbyYb4597iw3lMveVzdRRQKjFOcZimIs49Pteq7o2Bj_B6VP6CtW4IbU0CWGOrOrkQ9T3A/exec',
 
   // Imagen de fondo de la pantalla de inicio (archivo de Drive compartido como "Cualquier persona con el enlace").
   // Formato: 'https://lh3.googleusercontent.com/d/1SwfuSrn0j517bGUMy6RD1Eho42OQDUx9'. Vacío o si no carga = fondo de color según el tema.
-  fondoInicioUrl: 'https://lh3.googleusercontent.com/d/1SwfuSrn0j517bGUMy6RD1Eho42OQDUx9',
+  fondoInicioUrl: '',
 
   // Logos de LATAM (archivos de Drive compartidos como "Cualquier persona con el enlace").
   // simbolo: sin letras (barra lateral y barra superior) · completo: con letras (inicio de sesión y pantalla de carga).
@@ -142,7 +142,7 @@ function logoHtml_(tipo, modo) {
 
 /** Revisa la instalación paso a paso. Solo muestra conteos y estados, nunca nombres ni contraseñas. */
 function diagnostico_() {
-  const L = ['INS 360 LP · diagnóstico · versión ' + VERSION_APP, 'Fecha del servidor: ' + new Date().toISOString(), ''];
+  const L = [CONFIG.nombreApp + ' · diagnóstico · versión ' + VERSION_APP, 'Fecha del servidor: ' + new Date().toISOString(), ''];
   const paso = (nombre, fn) => { try { L.push('OK    ' + nombre + (function (r) { return r ? ' — ' + r : ''; })(fn())); } catch (err) { L.push('ERROR ' + nombre + ' — ' + (err && err.message)); } };
   paso('Archivo HTML "Index"', () => { const c = HtmlService.createHtmlOutputFromFile('Index').getContent(); if (c.indexOf("include('VacacionesVista')") < 0 || c.indexOf('Index v' + VERSION_APP) < 0) throw new Error('es una versión anterior; vuelve a copiarlo desde el zip v' + VERSION_APP); return Math.round(c.length / 1024) + ' KB'; });
   ARCHIVOS_HTML_.forEach(n => paso('Archivo HTML "' + n + '"', () => revisarArchivoHtml_(n)));

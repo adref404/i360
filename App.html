@@ -43,13 +43,13 @@ const TODAS = ["VIN","AUD","IET","RES","VHA","GES","BLA","VAC","DM","LIC","CUM",
 const sw = k => `<i class="sw ${k==="DO"?"do":""}" style="background:${KC[k].color}${k==="SIN"||k==="BLA"?";box-shadow:inset 0 0 0 1px var(--line-2)":""}"></i>`;
 const ICON_PLANE = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>`;
 
-const TAB_NOMBRE = {ind:"Indicadores", seg:"Seguimiento del mes", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", vac:"Vacaciones", int:"Intercambios", cargar:"Actualizar rol", colores:"Tipos y colores", usuarios:"Usuarios y accesos", mi:"Mi rol"};
+const TAB_NOMBRE = {ind:"Indicadores", rol:"Rol completo", dia:"Equipo por día", inst:"Por instructor", vac:"Vacaciones", int:"Intercambios de rol", cargar:"Actualizar rol", colores:"Tipos y colores", usuarios:"Usuarios y accesos", mi:"Mi rol"};
 
 /* ============ Estado ============ */
 const S = {
   token:null, usuario:null, vistas:[], equipo:false, hoy:null, baseUrl:"",
   resp:{}, mes:null, modo:"anio", vVuelo:"tasa", distModo:"pct",
-  tab:null, uFiltroMes:null, uTipo:"todos", dia:null, filtro:null, busca:"", verBp:null, segFiltro:"pend",
+  tab:null, uFiltroMes:null, uTipo:"todos", uAlcV:"mes", uAlcO:"mes", dia:null, filtro:null, busca:"", verBp:null,
   xlsxPrev:null, vac:null, selVac:new Set(), vacSim:[], vacAnio:null, selCom:"", intercambios:[], notifFiltro:"todas", tipos:null, tiposEdit:[], tiposSucio:false, colImport:null, colVista:null, colMes:"", colTest:"", fuentes:null, fuentesMsg:"", fuentesCargando:false, adm:null, admCargando:false, buscaU:"", filtroU:"todos",
   login:{modo:"login", usuario:"", err:"", ok:"", google:""}, listo:false
 };
@@ -68,7 +68,7 @@ const esAdmin = () => S.usuario && S.usuario.rol==="admin";
 /* Nivel del perfil de acceso en una sección: 0 sin acceso · 1 ver · 2 gestionar (el servidor también lo valida) */
 const nivelSec = k => !esAdmin() ? 0 : (S.usuario.niveles ? (S.usuario.niveles[k]||0) : 2);
 const gestiona = k => nivelSec(k) >= 2;
-const SECC_CON_ACCIONES = ["seg","vac","int","cargar","colores","usuarios"];
+const SECC_CON_ACCIONES = ["vac","int","cargar","colores","usuarios"];
 
 /* Registro de acciones de detalle (drill-down) por render */
 let DR = {}; let drn=0;
@@ -147,7 +147,7 @@ function aplicarDatos(P, mantener){
   S.usuario=P.usuario; S.vistas=P.usuario.vistas||[]; S.equipo=!!P.usuario.equipo; S.hoy=P.hoy; S.baseUrl=P.baseUrl||"";
   S.resp=P.respuestas||{};
   S.vac=P.vac||{personas:{}, solicitudes:[], cfg:null, ventanaUltima:null, fuente:""}; resetVac();
-  S.intercambios=P.intercambios||[]; S.intAprob=P.intAprob||null;
+  S.intercambios=P.intercambios||[]; S.intAprob=P.intAprob||null; S.intConFinal=!!P.intConFinal;
   const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
   MO=construirModelo(P); STC={};
   if(!mantener || !MO.orden.includes(S.mes)) S.mes=mesInicial();
@@ -229,7 +229,7 @@ function vistaLogin(){
       <button class="btn primary block" type="submit" id="lgBtn">Ingresar</button>
     </form>
     <div class="divider">¿Primera vez?</div>
-    <button class="btn block" type="button" data-lmodo="activar">Activar cuenta o usar un código</button>
+    <button class="btn block" type="button" data-lmodo="activar">Genera código y activa tu cuenta</button>
     ${L.google?`<button class="btn block" type="button" id="lgGoogle">Continuar como ${esc(L.google)}</button>`:""}`;
   else if(L.modo==="activar") form=`
     <div><span class="eyebrow">Primer ingreso o restablecer</span><h2>Crea tu contraseña</h2><p class="sub">Usa el código temporal que te dio coordinación o que llegó a tu correo. Sirve una sola vez.</p></div>
@@ -257,7 +257,7 @@ function vistaLogin(){
     <div class="auth-side">
       ${window.FONDO_INICIO?`<img class="auth-bg" src="${esc(window.FONDO_INICIO)}" alt="" onload="this.parentNode.classList.add('con-fondo')" onerror="this.remove()">`:""}
       ${logoHTML('completo','oscuro')}
-      <div class="auth-hero"><h1>${esc(window.NOMBRE_APP||"INS 360")}</h1><p>Gestión de instructores LP</p></div>
+      <div class="auth-hero"><h1>${esc(window.NOMBRE_APP||"i360")}</h1><p>Gestión de instructores LP</p></div>
       <p class="small">LATAM Airlines · Uso interno${window.VERSION_APP?` · v${esc(window.VERSION_APP)}`:""}</p>
       <div class="runway" aria-hidden="true"></div>
     </div>
@@ -377,12 +377,11 @@ function vistaShell(){
     if(sinDatos) return vacioRol();
     return vistaUsuario(S.usuario.bp,false);
   }
-  const conMes=["ind","seg","rol","dia"].includes(S.tab);
+  const conMes=["ind","rol","dia"].includes(S.tab);
   if(!vistaPersona() && S.mes && !MO.orden.includes(S.mes)) S.mes=mesInicial();
   let body="";
   if(sinDatos && !["cargar","usuarios"].includes(S.tab)) body=vacioRol();
   else if(S.tab==="ind") body=admIndicadores();
-  else if(S.tab==="seg") body=admSeguimiento();
   else if(S.tab==="rol") body=admMatriz();
   else if(S.tab==="dia") body=admDia();
   else if(S.tab==="inst") body=admInst();
@@ -401,9 +400,9 @@ function vistaShell(){
 }
 
 /* ============ Barra lateral (coordinación) ============ */
-const GRUPOS_NAV = [["Rol del mes",["ind","seg","rol","dia","inst","mi"]],["Gestión",["vac","int"]],["Administración",["cargar","colores","usuarios"]]];
+const GRUPOS_NAV = [["Rol del mes",["ind","rol","dia","inst","mi"]],["Gestión",["vac","int"]],["Administración",["cargar","colores","usuarios"]]];
 const ICONO_NAV = {
-  ind:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', seg:'<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
+  ind:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   rol:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>', dia:'<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15 20a5 5 0 0 1 6-4.6"/>',
   inst:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', mi:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   vac:'<path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/><circle cx="12" cy="12" r="4"/>',
@@ -417,7 +416,6 @@ function pendientesNav(k){
   try{
     if(k==="vac"){ const s=(S.vac&&S.vac.solicitudes)||[]; return s.filter(x=>x.estado==="pendiente").length+s.filter(revisionPendiente).length; }
     if(k==="int"){ const A=intAprob(); return intercambios().filter(x=>(x.estado==="en_supervisor"&&A.soyRevisor)||(x.estado==="en_jefe"&&A.soyFinal)).length; }
-    if(k==="seg") return Object.values(S.resp||{}).reduce((a,r)=>a+(r.obs||[]).filter(o=>o.estado!=="resuelta").length,0);
   }catch(e){}
   return 0;
 }
@@ -442,7 +440,7 @@ function barraLateral(tabs){
     return `<button type="button" class="side-i" data-atab="${k}" data-label="${esc(TAB_NOMBRE[k])}" aria-current="${S.tab===k?"page":"false"}">
       <span class="side-ic">${svgUI(ICONO_NAV[k]||"")}${n?`<i class="side-dot"></i>`:""}</span><span class="side-l">${TAB_NOMBRE[k]}</span>${n?`<b class="side-n num">${n>99?"99+":n}</b>`:""}</button>`; };
   return `<aside class="side" id="side" aria-label="Navegación principal">
-    <div class="side-head"><div class="side-brand">${marcaHTML()}<div class="side-brand-t"><b>INS 360</b><small>LATAM · Instructores LP</small></div></div>
+    <div class="side-head"><div class="side-brand">${marcaHTML()}<div class="side-brand-t"><b>${esc(window.NOMBRE_APP||"i360")}</b><small>LATAM · Instructores LP</small></div></div>
       <button type="button" class="side-x" data-side="cerrar" aria-label="Cerrar menú">${svgUI(ICONO_UI.cerrar)}</button></div>
     <div class="side-perfil"><span class="avatar">${esc(ini)}${u.foto?`<img src="${esc(u.foto)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`:""}</span>
       <div><b>${esc(u.nombre||"")}</b><small>${esc(u.rolTxt||"")}</small>${u.correo?`<small>${esc(u.correo)}</small>`:""}</div></div>
@@ -515,11 +513,9 @@ function wire(){
   document.querySelectorAll("[data-dm]").forEach(b=>b.onclick=()=>{ S.distModo=b.dataset.dm; render(); });
   document.querySelectorAll("[data-ufm]").forEach(b=>b.onclick=()=>{ S.uFiltroMes=null; render(); });
   document.querySelectorAll("[data-utipo]").forEach(b=>b.onclick=()=>{ S.uTipo=b.dataset.utipo; render(); });
+  document.querySelectorAll("[data-ualcv]").forEach(b=>b.onclick=()=>{ S.uAlcV=b.dataset.ualcv; render(); });
+  document.querySelectorAll("[data-ualco]").forEach(b=>b.onclick=()=>{ S.uAlcO=b.dataset.ualco; render(); });
   document.querySelectorAll("[data-irmes]").forEach(b=>b.onclick=()=>irAMes(b.dataset.irmes));
-  document.querySelectorAll("[data-segf]").forEach(b=>b.onclick=()=>{ S.segFiltro=b.dataset.segf; render(); });
-  document.querySelectorAll("[data-act='confirmar']").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Guardando…");
-    try{ const r=await api("apiConfirmarRol",S.token,S.mes,dispositivo()); S.resp[S.mes+"_"+S.usuario.bp]=r; render(); toast("Rol confirmado. Gracias."); }catch(e){ setCargando(b,false); toast(e.message); } });
-  document.querySelectorAll("[data-act='obsGeneral']").forEach(b=>b.onclick=()=>abrirObsGeneral(S.usuario.bp));
   document.querySelectorAll("[data-resolver]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"…");
     try{ const r=await api("apiResolverObs",S.token,b.dataset.mes,b.dataset.bp,b.dataset.resolver); S.resp[b.dataset.mes+"_"+b.dataset.bp]=r; render(); toast("Observación marcada como resuelta"); }catch(e){ setCargando(b,false); toast(e.message); } });
   document.querySelectorAll("#app [data-verbp]").forEach(b=>b.onclick=()=>verInstructor(b.dataset.verbp));
@@ -558,6 +554,7 @@ function wire(){
   document.querySelectorAll("[data-act='recargarUsuarios']").forEach(b=>b.onclick=()=>{ S.adm=null; render(); });
   document.querySelectorAll("[data-codigo]").forEach(b=>b.onclick=()=>abrirGenerarCodigo(b.dataset.codigo));
   document.querySelectorAll("[data-nuevoadm]").forEach(b=>b.onclick=abrirNuevoAdmin);
+  document.querySelectorAll("[data-uedit]").forEach(b=>b.onclick=()=>abrirEditarUsuario(b.dataset.uedit));
   document.querySelectorAll("[data-perfnuevo]").forEach(b=>b.onclick=()=>abrirPerfil(null));
   document.querySelectorAll("[data-perfedit]").forEach(b=>b.onclick=()=>abrirPerfil(b.dataset.perfedit));
   document.querySelectorAll("[data-perfil]").forEach(sel=>sel.onchange=async()=>{ sel.disabled=true;

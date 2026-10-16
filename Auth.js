@@ -122,8 +122,8 @@ function nombreDe_(u) { return u.nombre || u.nombreCompleto || ('BP ' + u.bp); }
 
 /* ---------------- Permisos (hoja Permisos) ---------------- */
 
-const VISTAS_ORDEN_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'int', 'cargar', 'colores', 'usuarios', 'mi'];
-const VISTAS_EQUIPO_ = ['ind', 'seg', 'rol', 'dia', 'inst', 'vac'];
+const VISTAS_ORDEN_ = ['ind', 'rol', 'dia', 'inst', 'vac', 'int', 'cargar', 'colores', 'usuarios', 'mi'];
+const VISTAS_EQUIPO_ = ['ind', 'rol', 'dia', 'inst', 'vac'];
 function claveVista_(etiqueta, rol) {
   const t = normTxt_(etiqueta);
   if (t.indexOf('vista por instructor') === 0 || t === 'por instructor' || t === 'mi rol') return rol === 'inst' ? 'mi' : 'inst';
@@ -139,7 +139,7 @@ function claveVista_(etiqueta, rol) {
   return '';
 }
 function vistasDe_(rol) {
-  const def = rol === 'admin' ? ['ind', 'seg', 'rol', 'dia', 'inst', 'vac', 'int', 'cargar', 'colores', 'usuarios'] : ['mi'];
+  const def = rol === 'admin' ? ['ind', 'rol', 'dia', 'inst', 'vac', 'int', 'cargar', 'colores', 'usuarios'] : ['mi'];
   const t = filas_(hoja_(CONFIG.hojas.permisos));
   if (!t.rows.length) return def;
   const cRol = rol === 'admin' ? col_(t.head, 'administrador', 'admin') : col_(t.head, 'instructor');
@@ -204,11 +204,11 @@ function enviarCodigoPorCorreo_(u, codigo, vence) {
     to: u.correo,
     subject: CONFIG.nombreApp + ': tu código de acceso',
     body: 'Hola ' + nombreDe_(u) + ',\n\nTu código de acceso es: ' + codigo + '\n\n' +
-      'Entra a la aplicación, elige "Activar cuenta o usar un código", escribe tu BP, este código y tu nueva contraseña.\n' +
+      'Entra a la aplicación, elige "Genera código y activa tu cuenta", escribe tu BP, este código y tu nueva contraseña.\n' +
       'El código sirve una sola vez y vence el ' + venceTxt + '.\n\n' + (urlApp_() ? 'Entra aquí: ' + urlApp_() + '\n\n' : '') + 'Si no lo pediste, ignora este correo.',
     htmlBody: '<p>Hola ' + nombreDe_(u) + ',</p><p>Tu código de acceso es:</p>' +
       '<p style="font:700 24px monospace;letter-spacing:3px">' + codigo + '</p>' +
-      '<p>Entra a la aplicación, elige <b>Activar cuenta o usar un código</b>, escribe tu BP, este código y tu nueva contraseña.<br>' +
+      '<p>Entra a la aplicación, elige <b>Genera código y activa tu cuenta</b>, escribe tu BP, este código y tu nueva contraseña.<br>' +
       'El código sirve una sola vez y vence el ' + venceTxt + '.</p>' + botonAppHtml_('Abrir ' + CONFIG.nombreApp + ' y activar mi cuenta') + '<p style="color:#666">Si no lo pediste, ignora este correo.</p>',
     name: CONFIG.nombreApp
   });
@@ -318,7 +318,7 @@ function apiLogin(usuario, clave, recordar, disp) {
       const n = sumarFallo_(claveBloqueo);
       registrar_(u, 'Intento fallido', motivo, disp, u ? '' : id);
       if (n >= CONFIG.intentosMax) { registrar_(u, 'Bloqueo temporal', CONFIG.bloqueoMin + ' min', disp, u ? '' : id); revisarBloqueo_(claveBloqueo); }
-      throw falla_('Usuario o contraseña incorrectos. Si es tu primer ingreso, usa "Activar cuenta o usar un código".', 'CREDENCIALES');
+      throw falla_('Usuario o contraseña incorrectos. Si es tu primer ingreso, usa "Genera código y activa tu cuenta".', 'CREDENCIALES');
     }
     limpiarFallos_(claveBloqueo);
     return iniciarSesion_(u, !!recordar, disp);
@@ -447,7 +447,7 @@ function apiUsuarios(token) {
         const c = cred_(u.bp) || {};
         const r = reg[u.bp] || {};
         return {
-          bp: u.bp, nombre: nombreDe_(u), nombreCompleto: u.nombreCompleto, correo: u.correo,
+          bp: u.bp, nombre: nombreDe_(u), nombreCorto: u.nombre, nombreCompleto: u.nombreCompleto, correo: u.correo,
           rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : u.rol === 'inst' ? 'Instructor' : (u.rolTxt || 'Sin rol'),
           rol: u.rol, activo: u.activo, principal: !!u.principal, cargo: u.cargo, area: u.area, foto: u.foto,
           perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : '',
@@ -531,6 +531,37 @@ function apiCrearAdmin(token, d) {
       const u = usuarios_().find(x => x.bp === bp);
       registrar_(u, 'Administrador creado', 'Por ' + nombreDe_(yo), '');
       return { bp: bp, nombre: nombre };
+    });
+  });
+}
+
+/**
+ * Corrige el nombre, el nombre completo o el correo de un usuario (instructor o administrador).
+ * El BP no se edita: es la llave de su contraseña, vacaciones, intercambios y de su fila en el rol.
+ */
+function apiEditarUsuario(token, bp, d) {
+  return responder_(() => {
+    const yo = exigirGestorUsuarios_(token);
+    d = d || {};
+    const nombre = String(d.nombre || '').trim().slice(0, 60), completo = String(d.nombreCompleto || '').trim().slice(0, 120);
+    const correo = String(d.correo || '').trim().toLowerCase();
+    if (!nombre) throw falla_('Escribe el nombre con el que aparece en la app.');
+    if (correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(correo)) throw falla_('El correo no es válido.');
+    return conBloqueo_(() => {
+      _USU = null;
+      const u = usuarios_().find(x => x.bp === bpTxt_(bp));
+      if (!u) throw falla_('Ese BP ya no está en la hoja Usuarios. Recarga la página.', 'YA_RESUELTO');
+      exigirPuedeAdministrar_(yo, u);
+      if (correo && usuarios_().some(x => x.bp !== u.bp && x.correo === correo)) throw falla_('Ese correo ya lo tiene otro usuario.');
+      const cambios = [];
+      if (nombre !== u.nombre) cambios.push('nombre: ' + (u.nombre || '—') + ' → ' + nombre);
+      if (completo !== u.nombreCompleto) cambios.push('nombre completo');
+      if (correo !== u.correo) cambios.push('correo: ' + (u.correo || '—') + ' → ' + (correo || '—'));
+      if (!cambios.length) return { bp: u.bp, nombre: nombre, cambios: 0 };
+      escribirFila_(hoja_(CONFIG.hojas.usuarios), u.fila, { 'Nombre (como aparece en el rol)': nombre, 'Nombre completo': completo, 'Correo corporativo': correo });
+      _USU = null;
+      registrar_(u, 'Datos editados', cambios.join(' · ') + ' · por ' + nombreDe_(yo), '');
+      return { bp: u.bp, nombre: nombre, cambios: cambios.length };
     });
   });
 }

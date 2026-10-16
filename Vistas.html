@@ -27,29 +27,26 @@ function vistaUsuario(bp, desdeAdmin){
   if(S.uFiltroMes && !mesesY.includes(S.uFiltroMes)) S.uFiltroMes=null;
   const filtroM=S.uFiltroMes;
   const tipoOk = r => S.uTipo==="ins" ? r.x.k==="VIN" : S.uTipo==="pro" ? r.x.k==="VHA" : (r.x.k==="VIN"||r.x.k==="VHA");
-  const base = filtroM ? sY.reg.filter(r=>r.mes===filtroM) : sA.reg;
+  /* alcance de las listas: mes que se está viendo (por defecto) o acumulado del año hasta ese mes */
+  const ytdV = S.uAlcV==="ytd", ytdO = S.uAlcO==="ytd";
+  const periodoV = filtroM ? mesLargo(filtroM) : ytdV ? `enero a ${miF.nombre} ${miF.y}` : mesLargo(mesF);
+  const base = filtroM ? sY.reg.filter(r=>r.mes===filtroM) : ytdV ? sA.reg : sM.reg;
   const listaV=base.filter(tipoOk).slice().reverse();
   const grupos={}; listaV.forEach(r=>{ (grupos[r.mes]=grupos[r.mes]||[]).push(r); });
   const flHTML = Object.keys(grupos).length? Object.keys(grupos).sort().reverse().map(m=>`<div class="fl-m">${mesLargo(m)} · ${grupos[m].filter(r=>r.x.k==="VIN").length} de instrucción · ${grupos[m].filter(r=>r.x.k==="VHA").length} propios</div>`+grupos[m].map(r=>`
     <button class="fl-i" ${drill(()=>abrirDia(bp,r.mes,r.d))}><span class="dd num">${r.d}<small>${DOWS[dowOf(r.mes,r.d)]} ${mesCorto(r.mes)}</small></span>
     <span><span class="t">${esc(r.x.titulo)}</span>${r.x.meta?`<br><span class="m">${esc(r.x.meta.split("\n").slice(0,2).join(" · "))}</span>`:""}</span>
     <span class="row" style="gap:6px;justify-content:flex-end">${r.x.pernocta?`<span class="viatico-tag">Viático</span>`:""}<span class="chipk">${sw(r.x.k)}${r.x.k==="VIN"?(r.x.wb?"WB":r.x.nb?"NB":"INS"):"Propio"}</span></span></button>`).join("")).join("")
-    : `<p class="empty">No hay vuelos ${S.uTipo==="ins"?"de instrucción ":S.uTipo==="pro"?"propios ":""}registrados ${filtroM?"en "+mesLargo(filtroM):"de enero a "+miF.nombre}.</p>`;
+    : `<p class="empty">No hay vuelos ${S.uTipo==="ins"?"de instrucción ":S.uTipo==="pro"?"propios ":""}registrados ${filtroM||!ytdV?"en "+mesLargo(filtroM||mesF):"de enero a "+miF.nombre}.</p>`;
   /* otras actividades de enero al mes */
+  const sO = ytdO ? sA : sM, periodoO = ytdO ? `enero a ${miF.nombre} ${miF.y}` : mesLargo(mesF);
   const otras=[["IET","Iniciales"],["IET","RTI (recurrentes)"],["IET","Revas de servicio"],["IET","Prácticas en avión o maqueta"],["IET","Cursos a tripulantes"],["IET","Talleres, CRM y realidad virtual"],["IET","Otras actividades de tierra"],["RES",null],["AUD",null],["GES",null],["VHA",null],["BLA",null],["CUM",null],["DM",null],["LIC",null]]
-    .map(([k,sub])=>({k,lab:sub||KC[k].corto,n: sub? (sA.sub[sub]||0) : (sA.cnt[k]||0), regs:()=>sA.reg.filter(r=>r.x.k===k && (!sub||r.x.sub===sub))})).filter(o=>o.n>0);
+    .map(([k,sub])=>({k,lab:sub||KC[k].corto,n: sub? (sO.sub[sub]||0) : (sO.cnt[k]||0), regs:()=>sO.reg.filter(r=>r.x.k===k && (!sub||r.x.sub===sub))})).filter(o=>o.n>0);
   const maxO=Math.max(1,...otras.map(o=>o.n));
-  /* confirmación del rol del mes elegido */
+  /* observaciones del mes elegido */
   const r=respDe(bp,mes);
   const p=pe.meses[mes]||[];
   const esHoyMes=HOY.getFullYear()===mi.y&&HOY.getMonth()+1===mi.m;
-  const editable = esEditable(mes);
-  const conf = !enMes || !editable ? "" : r&&r.confirmado
-    ? `<div class="card row"><span class="pill good"><i></i>Rol de ${mi.nombre} confirmado</span><span class="hint">${fechaCorta(r.confirmadoAt)}</span></div>`
-    : !propio ? `<div class="card row"><span class="pill warn"><i></i>Aún no confirma su rol de ${mi.nombre}</span></div>`
-    : `<div class="card stack" style="gap:10px"><h3>¿Revisaste tu rol de ${mi.nombre}?</h3><p class="hint">Confírmalo para que coordinación sepa que lo viste. Si algo no calza, toca el día y avísanos.</p>
-       <div class="row"><button class="btn primary" data-act="confirmar">Confirmo mi rol</button><button class="btn" data-act="obsGeneral">Algo no calza</button></div></div>`;
-  const sols=MO.solicitudes.filter(x=>x.bp===bp && x.desde.startsWith(String(miF.y))).slice().sort((a,b)=>b.desde.localeCompare(a.desde));
   const pv=(()=>{ if(!enMes || mes<mesHoy()) return null; let desde=1; if(esHoyMes) desde=HOY.getDate(); for(let d=desde; d<=p.length; d++){ if(p[d-1].k==="VIN"||p[d-1].k==="VHA") return {d,x:p[d-1]}; } return null; })();
   const M=MO.meses[mes]||{};
   /* calendario: rol del mes si existe; si no, la capa de vacaciones (y la selección cuando la ventana está abierta) */
@@ -88,7 +85,7 @@ function vistaUsuario(bp, desdeAdmin){
       ${enFreeze?`<div class="row between">${toggleColSheetHTML()}</div>`+codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
       ${enFreeze?`<div style="border-top:1px solid var(--line);padding-top:12px"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sMc)}</div>`:""}
     </div>
-    <div class="stack rol-side">${enFreeze?conf+obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
+    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
   </div>
   <div class="u-grid" style="margin-top:16px">
     <div class="stack">
@@ -98,18 +95,17 @@ function vistaUsuario(bp, desdeAdmin){
         ${colsChart(porMes.map(x=>({lab:mesCorto(x.m),sel:x.m===mesF,act:filtroM===x.m, total:(x.n||0)+x.h, segs:x.n===null?[]:[["VIN",x.n],["VHA",x.h]], tip:`<b>${mesLargo(x.m)}</b><br>${x.n===null?"Sin rol":`${x.n} de instrucción · ${x.h} propios`}`, click:()=>{ S.uFiltroMes = S.uFiltroMes===x.m?null:x.m; render(); }})), maxV, true)}
       </div>
       <div class="card">
-        <div class="row between" style="margin-bottom:8px"><h3>Historial de vuelos · ${filtroM?mesLargo(filtroM):`enero a ${miF.nombre} ${miF.y}`}</h3>
+        <div class="row between" style="margin-bottom:8px"><h3>Historial de vuelos · ${periodoV}</h3>
           <div class="row" style="gap:6px">${filtroM?`<button class="btn sm" data-ufm="">Quitar filtro</button>${filtroM!==mes?`<button class="btn sm" data-irmes="${filtroM}">Ir a ${mesInfo(filtroM).nombre}</button>`:""}`:""}</div></div>
-        <div class="seg" role="group" aria-label="Tipo de vuelo" style="margin-bottom:8px"><button aria-pressed="${S.uTipo==="todos"}" data-utipo="todos">Todos</button><button aria-pressed="${S.uTipo==="ins"}" data-utipo="ins">Instrucción</button><button aria-pressed="${S.uTipo==="pro"}" data-utipo="pro">Propios</button></div>
-        <div class="fl scroll">${flHTML}</div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><div class="seg" role="group" aria-label="Tipo de vuelo"><button aria-pressed="${S.uTipo==="todos"}" data-utipo="todos">Todos</button><button aria-pressed="${S.uTipo==="ins"}" data-utipo="ins">Instrucción</button><button aria-pressed="${S.uTipo==="pro"}" data-utipo="pro">Propios</button></div>${filtroM?"":`<div class="seg" role="group" aria-label="Periodo"><button aria-pressed="${!ytdV}" data-ualcv="mes">${miF.nombre.replace(/^./,c=>c.toUpperCase())}</button><button aria-pressed="${ytdV}" data-ualcv="ytd">Enero a ${miF.nombre}</button></div>`}
+        </div><div class="fl scroll">${flHTML}</div>
       </div>
     </div>
     <div class="stack">
       <div class="card">
-        <div class="chart-title"><div><h3>Otras actividades de enero a ${miF.nombre}</h3><p>Días por tipo. Toca una barra para ver las fechas.</p></div></div>
-        ${otras.length?`<div class="rank">${otras.map(o=>`<div class="rowhit" ${drill(()=>abrirDrill(`${esc(o.lab)} · ${esc(pe.nombre)}`,`Enero a ${miF.nombre} ${miF.y}`,o.regs()))}><span class="nm">${esc(o.lab)}</span><span class="track"><span class="bar" style="width:${o.n/maxO*100}%;background:${KC[o.k].color}"></span></span><span class="val num">${o.n}</span></div>`).join("")}</div>`:`<p class="empty">Sin otras actividades en el periodo.</p>`}
+        <div class="chart-title"><div><h3>Otras actividades · ${periodoO}</h3><p>Días por tipo. Toca una barra para ver las fechas.</p></div><div class="seg" role="group" aria-label="Periodo"><button aria-pressed="${!ytdO}" data-ualco="mes">${miF.nombre.replace(/^./,c=>c.toUpperCase())}</button><button aria-pressed="${ytdO}" data-ualco="ytd">Enero a ${miF.nombre}</button></div></div>
+        ${otras.length?`<div class="rank">${otras.map(o=>`<div class="rowhit" ${drill(()=>abrirDrill(`${esc(o.lab)} · ${esc(pe.nombre)}`,cap(periodoO),o.regs()))}><span class="nm">${esc(o.lab)}</span><span class="track"><span class="bar" style="width:${o.n/maxO*100}%;background:${KC[o.k].color}"></span></span><span class="val num">${o.n}</span></div>`).join("")}</div>`:`<p class="empty">Sin otras actividades en ${ytdO?"el periodo":mesLargo(mesF)}.</p>`}
       </div>
-      ${sols.length?`<div class="card"><h3 style="margin-bottom:6px">Solicitudes de jefatura ${miF.y}</h3><div class="fl">${sols.map(x=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${esc(x.tipo)}</span><br><span class="m">${fmtISO(x.desde)}${x.hasta&&x.hasta!==x.desde?" al "+fmtISO(x.hasta):""}</span></span><span class="pill ${x.estado==="asignado"?"good":x.estado==="no se asignó"?"crit":""}">${x.estado==="asignado"?"Asignada":x.estado==="no se asignó"?"No se asignó":"Sin respuesta"}</span></div>`).join("")}</div></div>`:""}
     </div>
   </div>
   <p class="foot">Datos de ${mesLargo(mesF)}: ${esc((MO.meses[mesF]||{}).fuente||"—")}${(MO.meses[mesF]||{}).hoja?`, hoja ${esc(MO.meses[mesF].hoja)}`:""}${(MO.meses[mesF]||{}).actualizadoAt?` · actualizado ${fechaLarga(MO.meses[mesF].actualizadoAt)}`:""}. Vacaciones: ${esc(VAC().fuente||"hoja Vacaciones")}, por periodo DGAC de cada instructor.</p>`;
@@ -220,7 +216,7 @@ function legendCount(max){ const g={}; for(let v=0;v<=max;v++){ const q=qCount(v
 /* ============ Detalle de un día ============ */
 function abrirDia(bp,mes,d){
   const pe=MO.personas[bp]; const x=pe&&pe.meses[mes]&&pe.meses[mes][d-1]; if(!x) return;
-  const puedeObs=S.usuario.bp===bp && esEditable(mes);
+  const puedeObs=false; // rol publicado = cerrado: no se envían observaciones
   const puedeInt=puedeProponerInt(bp,mes,d);
   const intDia=intercambios().filter(z=>INT_ACTIVO.includes(z.estado) && z.mes===mes && z.dias.includes(d) && (z.solBp===bp||z.recBp===bp));
   const sc=document.createElement("div"); sc.className="scrim center";
@@ -243,18 +239,5 @@ function abrirDia(bp,mes,d){
     catch(x){ setCargando(b,false); toast(x.message); } };
   setTimeout(()=>$("#cerrar",sc).focus(),30);
 }
-function abrirObsGeneral(bp){
-  const mes=S.mes;
-  const sc=document.createElement("div"); sc.className="scrim center";
-  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true"><h2>¿Qué no calza?</h2><p class="hint">Escribe qué días o actividades de ${mesInfo(mes).nombre} no coinciden con lo que conversaste.</p>
-    <form id="fOg" class="stack" style="gap:8px"><textarea class="input" id="ogTxt" required maxlength="1500"></textarea><div class="row"><button class="btn primary" type="submit" id="ogBtn">Enviar</button><button class="btn" type="button" id="ogX">Cancelar</button></div></form></div>`;
-  document.body.appendChild(sc); const close=()=>sc.remove(); $("#ogX",sc).onclick=close; sc.addEventListener("click",e=>{ if(e.target===sc) close(); });
-  $("#fOg",sc).onsubmit=async e=>{ e.preventDefault(); const t=$("#ogTxt",sc).value.trim(); if(!t) return;
-    const b=$("#ogBtn",sc); setCargando(b,true,"Enviando…");
-    try{ const r=await api("apiObservacion",S.token,mes,null,t); S.resp[mes+"_"+bp]=r; close(); render(); toast("Observación enviada"); }
-    catch(x){ setCargando(b,false); toast(x.message); } };
-  setTimeout(()=>$("#ogTxt",sc).focus(),30);
-}
-
 window.__archivos=(window.__archivos||{}); window.__archivos["Vistas"]="v2.4";
 </script>

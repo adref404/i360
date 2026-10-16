@@ -25,7 +25,6 @@ function instalar() {
   [
     ['Vista por instructor', 'SI', 'SI', 'El instructor ve solo su propio rol (según su BP). El administrador puede elegir a cualquiera.'],
     ['Indicadores', 'NO', 'SI', 'Equidad del Freeze, tendencias, alertas.'],
-    ['Seguimiento del mes', 'NO', 'SI', 'Confirmaciones y observaciones por instructor.'],
     ['Rol completo', 'NO', 'SI', 'Matriz con todos los instructores del mes.'],
     ['Equipo por día', 'NO', 'SI', 'Quiénes tienen actividad cada día.'],
     ['Actualizar rol', 'NO', 'SI', 'Google Sheets mensuales conectados y carga de Excel. Nunca disponible para instructores.'],

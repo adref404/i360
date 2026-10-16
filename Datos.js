@@ -94,6 +94,7 @@ function apiDatos(token) {
       vac: datosVac_(equipo, u.bp),
       intercambios: intercambiosPara_(u),
       intAprob: u.rol === 'admin' ? infoAprobadoresInt_(u) : null,
+      intConFinal: aprobadoresInt_().final.length > 0, // para dibujar los pasos del intercambio
       baseUrl: u.rol === 'admin' ? ss_().getUrl() : ''
     };
   });
@@ -146,7 +147,7 @@ function apiObservacion(token, mes, dia, texto) {
 
 function apiResolverObs(token, mes, bp, obsId) {
   return responder_(() => {
-    const admin = sesion_(token, { seccion: 'seg', nivel: 2 }).u;
+    const admin = sesion_(token, { seccion: 'inst', nivel: 2 }).u;
     bp = bpTxt_(bp);
     return conBloqueo_(() => {
       const r = leerRespuestas_()[mes + '_' + bp];

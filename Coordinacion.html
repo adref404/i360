@@ -62,8 +62,6 @@ function alertas(I){
   });
   const solVacPend=(VAC().solicitudes||[]).filter(s=>s.estado==="pendiente");
   if(solVacPend.length) out.push({sev:"media", ev:"Dato", titulo:`${plural(solVacPend.length,"solicitud","solicitudes")} de vacaciones por revisar`, texto:`${[...new Set(solVacPend.map(s=>(MO.personas[s.bp]||{}).nombre||s.nombre))].join(", ")}. Apruébalas o recházalas en la pestaña Vacaciones.`, tags:["Vacaciones"], fn:()=>{ if(!puede("vac")) return; S.tab="vac"; render(); scrollTo(0,0); }});
-  const solNo=MO.solicitudes.filter(x=>per.some(m=>x.desde.startsWith(m)) && x.estado!=="asignado");
-  if(solNo.length) out.push({sev:"media", ev:"Dato", titulo:`${solNo.length} solicitud${solNo.length>1?"es":""} sin asignar`, texto:`Solicitudes registradas en ${periodoTxt().toLowerCase()} que no se asignaron o no tienen respuesta.`, tags:["Solicitudes"], fn:()=>abrirSolicitudes(solNo,"Solicitudes sin asignar",periodoTxt())});
   const sinM=gruposPeriodo([S.mes]).todos.filter(r=>r.s.sin>0);
   if(sinM.length) out.push({sev:"media", ev:"Dato", titulo:`Días sin asignar en ${mesInfo(S.mes).nombre}`, texto:`${sinM.reduce((a,r)=>a+r.s.sin,0)} días vacíos en el rol: ${sinM.map(r=>r.pe.nombre).join(", ")}.`, tags:["Calidad del dato"], fn:()=>abrirDrill("Días sin asignar",mesLargo(S.mes),regsDe(sinM.map(r=>r.pe.bp),[S.mes],x=>x.x.k==="SIN"))});
   Object.values(MO.personas).forEach(pe=>{ if(pe.bg&&pe.bg.expProgramada==="VENCIDO" && pe.meses[S.mes]) out.push({sev:"alta", ev:"Dato", titulo:`Experiencia reciente vencida: ${pe.nombre}`, texto:`Según la hoja Vigencias, su última experiencia reciente fue el ${pe.bg.ultimaExp?fmtISO(pe.bg.ultimaExp):"—"}.`, tags:["Vigencias"], fn:()=>verInstructor(pe.bp)}); });
@@ -90,14 +88,12 @@ function admIndicadores(){
   const mesesY=mesesDelAnio(S.mes);
   const vacP=vacEquipo().filter(r=>r.vp).map(r=>r.p);
   const vacLib=vacP.reduce((a,p)=>a+Math.max(0,p.der-p.tom-p.prog-p.sol),0), vacVence=vacP.filter(p=>p.der-p.tom-p.prog-p.sol>0&&p.diasRenov<=90).length;
-  const sols=MO.solicitudes.filter(x=>per.some(m=>x.desde.startsWith(m))); const solOk=sols.filter(x=>x.estado==="asignado").length;
-  const kpis=`<div class="kpis">
+  const kpis=`<div class="kpis k5">
     <button class="kpi" ${drill(()=>abrirDrill("Vuelos de instrucción",periodoTxt(),regsDe(allB,per,x=>x.x.k==="VIN")))}><span class="l">Vuelos de instrucción</span><span class="v num">${totVin}</span><span class="d">${delta||`${wb} WB · ${nb} NB`}</span><span class="go">Ver vuelos</span></button>
     <button class="kpi" ${drill(irA("rkVuelos"))}><span class="l">Equidad de vuelos</span><span class="v">${I.V.length?nV.t.split(" ")[0]:"—"}</span><span class="d">${I.V.length?`Variación ${pct(I.cvV)} en el grupo de vuelo`:"Sin grupo de vuelo en el periodo"}</span><span class="go">Ver ranking</span></button>
     <button class="kpi" ${drill(()=>abrirDrill("Viajes con viático",periodoTxt(),regsDe(allB,per,x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"))))}><span class="l">Viajes con viático</span><span class="v num">${G.todos.reduce((a,r)=>a+r.s.viajes,0)}</span><span class="d">Top 3: ${I.totViajes?pct(I.top3v/I.totViajes):"—"} del total</span><span class="go">Ver viajes</span></button>
     <button class="kpi" ${drill(irA("compTiempo"))}><span class="l">Días disponibles ocupados</span><span class="v num">${I.C.length?pct(I.mC):"—"}</span><span class="d">${I.C.length?`Rango ${pct(I.cargaMin)}–${pct(I.cargaMax)}`:"Sin datos"}</span><span class="go">Ver reparto</span></button>
     <button class="kpi" ${drill(irA("vacChart"))}><span class="l">Vacaciones por programar</span><span class="v num">${vacLib}<small> días</small></span><span class="d">${vacVence} con saldo que renueva en ≤90 días</span><span class="go">Ver por persona</span></button>
-    <button class="kpi" ${drill(()=>abrirSolicitudes(sols,"Solicitudes del periodo"))}><span class="l">Solicitudes atendidas</span><span class="v num">${sols.length?pct(solOk/sols.length):"—"}</span><span class="d">${solOk} de ${sols.length} asignadas</span><span class="go">Ver solicitudes</span></button>
   </div>`;
   const verd=(t,n,ev,txt,fn)=>`<button class="verdict" ${drill(fn)}><span class="ic ${ev.c==="nc"?"nc":n.c}">${ev.c==="nc"?"?":n.i}</span><span><b>${t}: ${ev.c==="nc"?"no concluyente":n.t.toLowerCase()}</b><p>${txt}</p><span class="evid">${ev.t}${ev.d?` · ${ev.d}`:""}</span></span></button>`;
   const vOrd=I.V.slice().sort((a,b)=>a.s.tasaVin-b.s.tasaVin), vmin=vOrd[0], vmax=vOrd[vOrd.length-1];
@@ -161,13 +157,6 @@ function admIndicadores(){
       return g+`<tr><th class="nm" title="${esc(r.pe.nombre)}">${esc(r.pe.nombre)}</th>${dims.map(d=>{ if(!d.bps.has(r.pe.bp)) return `<td><span class="c dna">·</span></td>`; const n=d.f(r.s); const exp=d.disp?d.tot*r.s.disp/d.disp:0;
         return `<td><button class="c ${dCls(n,exp)}" ${drill(()=>drillStats({bp:r.pe.bp,meses:per,pred:d.pred,grupo:[...d.bps],titulo:`${d.lab} · ${esc(r.pe.nombre)}`,unidad:d.lab,base:d.base,baseLab:d.baseLab,note:`${n} frente a ${f1(exp)} esperados según su disponibilidad (×${f1(exp?n/exp:0)}). Total del grupo: ${d.tot}.`}))} data-tip="${esc(`<b>${r.pe.nombre}</b><br>${d.lab}: ${n}<br>Esperado por disponibilidad: ${f1(exp)}`)}">${n}</button></td>`; }).join("")}</tr>`; }).join("")||`<tr><td class="empty">Sin datos en el periodo.</td></tr>`}</tbody></table></div></div>`;
   const vacHTML=vacEquipoHTML();
-  // Solicitudes por mes
-  const solM=mesesY.map(m=>{ const l=MO.solicitudes.filter(x=>x.desde.startsWith(m)); return {m,l,ok:l.filter(x=>x.estado==="asignado").length}; });
-  const maxS=Math.max(4,...solM.map(x=>x.l.length));
-  const sinSol=solM.filter(x=>!x.l.length).map(x=>mesInfo(x.m).nombre);
-  const solHTML=`<div class="card"><div class="chart-title"><div><h3>Solicitudes por mes · ${mi.y}</h3><p>Pedidos de jefatura y de instructores registrados en la hoja Solicitudes. Toca un mes para ver el detalle.</p></div><div class="legend"><span><i class="sw" style="background:var(--c-iet)"></i>Asignadas</span><span><i class="sw" style="background:var(--c-dm)"></i>No asignadas</span></div></div>
-    ${colsChartRaw(solM.map(x=>({lab:mesCorto(x.m),sel:x.m===S.mes,total:x.l.length,segs:[["var(--c-iet)",x.ok],["var(--c-dm)",x.l.length-x.ok]],tip:`<b>${mesLargo(x.m)}</b><br>${x.ok} asignadas de ${x.l.length}`,click:()=>abrirSolicitudes(x.l,"Solicitudes de "+mesLargo(x.m),mesLargo(x.m))})),maxS)}
-    ${sinSol.length?`<p class="hint" style="margin-top:8px">Sin solicitudes registradas en: ${sinSol.join(", ")}.</p>`:""}</div>`;
   // Composición del tiempo
   const TC=[["VIN","Vuelo INS",x=>x.x.k==="VIN"],["AUD","Auditoría",x=>x.x.k==="AUD"],["IET","Tierra",x=>x.x.k==="IET"],["RES","Reserva",x=>x.x.k==="RES"],["VHA","Vuelo propio",x=>x.x.k==="VHA"],["GES","Gestión",x=>x.x.k==="GES"],["BLA","Blanco",x=>x.x.k==="BLA"],["VAC","Vacaciones",x=>x.x.k==="VAC"],["AUS","Ausencias",x=>x.x.k==="DM"||x.x.k==="LIC"]];
   const vcat=(s,k)=> !s.dias?0 : k==="AUS" ? ((s.cnt.DM||0)+(s.cnt.LIC||0))/s.dias : k==="OCU" ? s.carga : (s.cnt[k]||0)/s.dias;
@@ -201,41 +190,11 @@ function admIndicadores(){
     ${hm}
     ${conc}
     ${comp}
-    <div class="grid2e">${vacHTML}${solHTML}</div>
-    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas Solicitudes, Vigencias, Usuarios y Vacaciones (periodo DGAC de cada instructor). Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
+    ${vacHTML}
+    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas Vigencias, Usuarios y Vacaciones (periodo DGAC de cada instructor). Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
   </div>`;
 }
 
-/* ---------- Seguimiento del mes ---------- */
-function estadoInst(bp){ const r=respDe(bp); const ab=(r&&r.obs||[]).filter(o=>o.estado!=="resuelta").length;
-  if(ab) return {k:"obs",txt:`${ab} observación${ab>1?"es":""}`,cls:"crit"}; if(r&&r.confirmado) return {k:"ok",txt:"Confirmado",cls:"good"}; return {k:"pend",txt:"Pendiente",cls:"warn"}; }
-function admSeguimiento(){
-  const P=rosterMes(S.mes); const n=P.length; const est=P.map(i=>estadoInst(i.bp));
-  const ok=est.filter(e=>e.k==="ok").length, ob=est.filter(e=>e.k==="obs").length, pe=n-ok-ob;
-  const obsAll=[]; P.forEach(i=>{ const r=respDe(i.bp); (r&&r.obs||[]).forEach(o=>obsAll.push({i,o})); }); const ab=obsAll.filter(x=>x.o.estado!=="resuelta");
-  const sin=P.reduce((a,i)=>a+i.p.filter(x=>x.k==="SIN").length,0);
-  const act=["VIN","AUD","IET","RES","VHA","GES"]; const mi=mesInfo(S.mes);
-  const cols=[]; let max=0; for(let d=1; d<=mi.dias; d++){ const c={}; act.forEach(k=>c[k]=0); P.forEach(i=>{ const x=i.p[d-1]; if(x&&act.includes(x.k)) c[x.k]++; }); const t=act.reduce((a,k)=>a+c[k],0); max=Math.max(max,t); cols.push({d,c,t}); }
-  const filtros=[["pend","Pendientes",pe],["obs","Con observaciones",ob],["ok","Confirmados",ok],["todos","Todos",n]];
-  const lista=P.map((i,k)=>({i,e:est[k]})).filter(x=>S.segFiltro==="todos"||x.e.k===S.segFiltro).sort((a,b)=>a.i.nombre.localeCompare(b.i.nombre,"es"));
-  const editable=esEditable(S.mes);
-  return `<div class="stack">
-    ${!editable?`<div class="note">${mesLargo(S.mes)} ya pasó: las confirmaciones y observaciones quedan como registro y ya no se pueden modificar.</div>`:""}
-    <div class="kpis k4">
-      <div class="kpi"><span class="l">Confirmaron su rol de ${mi.nombre}</span><span class="v num">${ok}<small> de ${n}</small></span><div class="meter"><span style="flex:${ok};background:var(--good)"></span><span style="flex:${ob};background:var(--crit)"></span><span style="flex:${pe};background:var(--line-2)"></span></div><span class="d">${pe} pendientes · ${ob} con observaciones</span></div>
-      <div class="kpi"><span class="l">Observaciones abiertas</span><span class="v num">${ab.length}</span><span class="d">${obsAll.length-ab.length} resueltas</span></div>
-      <button class="kpi" ${drill(()=>abrirDrill("Días sin asignar",mesLargo(S.mes),regsDe(P.map(i=>i.bp),[S.mes],x=>x.x.k==="SIN")))}><span class="l">Días sin asignar en el rol</span><span class="v num">${sin}</span><span class="go">Ver días</span></button>
-      <button class="kpi" ${drill(()=>abrirDrill("Viajes con viático",mesLargo(S.mes),regsDe(P.map(i=>i.bp),[S.mes],x=>x.x.pernocta&&(x.x.k==="VIN"||x.x.k==="VHA"))))}><span class="l">Viajes con viático</span><span class="v num">${P.reduce((a,i)=>a+ST(i.bp,[S.mes]).viajes,0)}</span><span class="go">Ver viajes</span></button>
-    </div>
-    <div class="card"><div class="chart-title"><div><h3>Instructores programados por día</h3><p>Toca una columna para ver el equipo de ese día.</p></div><div class="legend">${act.map(k=>`<span>${sw(k)}${KC[k].corto}</span>`).join("")}</div></div>
-      ${colsChart(cols.map(c=>({lab:String(c.d),sel:[0,6].includes(dowOf(S.mes,c.d)),total:0,segs:act.map(k=>[k,c.c[k]]),tip:`<b>${cap(DOW[dowOf(S.mes,c.d)])} ${c.d}</b><br>${act.map(k=>`<span class="r"><span>${KC[k].corto}</span><span>${c.c[k]}</span></span>`).join("")}<span class="r"><span>Programados</span><b>${c.t} de ${n}</b></span>`,click:puede("dia")?()=>{ S.dia=c.d; S.tab="dia"; render(); }:null})), max, false)}</div>
-    <div class="grid2e">
-      <div class="card"><h3 style="margin-bottom:8px">Observaciones abiertas · ${mi.nombre}</h3>${ab.length?`<div class="obs">${ab.map(({i,o})=>`<div><b style="font-size:13px">${esc(i.nombre)}</b>${obsItem(i.bp,o)}</div>`).join("")}</div>`:`<p class="empty">Nadie ha reportado diferencias todavía.</p>`}</div>
-      <div class="card"><div class="row between" style="margin-bottom:6px"><h3>Estado por instructor</h3></div>
-        <div class="chips" style="margin-bottom:6px">${filtros.map(([k,l,c])=>`<button class="chip" aria-pressed="${S.segFiltro===k}" data-segf="${k}">${l} <span class="num">${c}</span></button>`).join("")}</div>
-        <div class="status-list">${lista.map(({i,e})=>`<div class="status-row"><div><b>${esc(i.nombre)}</b><div class="hint mono">BP ${esc(i.bp)}</div></div><div class="row" style="gap:6px"><span class="pill ${e.cls}"><i></i>${e.txt}</span>${puede("inst")?`<button class="btn sm" data-verbp="${esc(i.bp)}">Ver rol</button>`:""}</div></div>`).join("")||`<p class="empty">Nadie en este estado.</p>`}</div></div>
-    </div></div>`;
-}
 /* ---------- Rol completo ---------- */
 function admMatriz(){
   const P=rosterMes(S.mes); const mi=mesInfo(S.mes); const q=norm(S.busca.trim());
@@ -243,7 +202,7 @@ function admMatriz(){
   if(S.filtro && !pres.includes(S.filtro)) S.filtro=null;
   const rows=P.filter(i=>!q||norm(i.nombre).includes(q)||String(i.bp).includes(q));
   const head=`<tr><th class="nm">Instructor</th>${Array.from({length:mi.dias},(_,k)=>{const d=k+1,w=dowOf(S.mes,d);return `<th style="${[0,6].includes(w)?"color:var(--muted)":""}"><span class="num">${d}</span><small>${DOWS[w]}</small></th>`}).join("")}</tr>`;
-  const body=rows.map(i=>{ const e=estadoInst(i.bp); return `<tr><td class="nm"><b>${esc(i.nombre)}</b><span class="mono">BP ${esc(i.bp)}</span> <span class="pill ${e.cls}" style="padding:0 7px;font-size:10.5px"><i></i>${e.txt}</span></td>
+  const body=rows.map(i=>{ return `<tr><td class="nm"><b>${esc(i.nombre)}</b><span class="mono">BP ${esc(i.bp)}</span></td>
     ${i.p.map((x,k)=>`<td class="c"><button class="cell k-${x.k} ${S.filtro===x.k?"hit":""}" ${estiloSheet(x)} ${drill(()=>abrirDia(i.bp,S.mes,k+1))} data-tip="${esc(`<b>${i.nombre} · ${k+1} ${mesCorto(S.mes)}</b><br>${x.titulo}${x.meta?"<br>"+x.meta.split("\n").slice(0,2).join("<br>"):""}`)}">${esc(x.code)}${["SIN","DO","VAC","FER","BLA"].includes(x.k)?"":`<small>${esc(x.k==="VIN"?"INS":x.k)}</small>`}${x.pernocta?`<i class="v"></i>`:""}</button></td>`).join("")}</tr>`; }).join("");
   const cuenta=k=>rows.reduce((a,i)=>a+i.p.filter(x=>x.k===k).length,0);
   return `<div class="stack"><div class="row between">${toggleColSheetHTML()}<div class="chips"><span class="hint">Resaltar:</span>${pres.map(k=>`<button class="chip" aria-pressed="${S.filtro===k}" data-filtro="${k}">${sw(k)}${KC[k].corto} <span class="num">${cuenta(k)}</span></button>`).join("")}</div>

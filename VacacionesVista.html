@@ -570,10 +570,6 @@ function notificaciones(){
       if(s.motivoRev) out.push({id:"r:"+s.id, k:"rev", fecha:revisionPendiente(s)?s.respondidaAt:(s.revAtendidaAt||s.decididoAt), pend:revisionPendiente(s)&&gestiona("vac"),
         t:`${nom(s.bp)} pidió revisión de sus vacaciones`, d:s.motivoRev, est:revisionPendiente(s)?"Por atender":"Revisión atendida", tono:"", go:()=>irANotif("vac","sol-"+s.id)});
     });
-    if(puede("seg")) Object.values(S.resp||{}).forEach(r=>(r.obs||[]).forEach(o=>out.push({id:"o:"+o.id, k:"obs", fecha:o.at, pend:o.estado!=="resuelta"&&gestiona("seg"),
-      t:`${nom(r.bp)}: algo no calza en su rol`, d:`${mesLargo(o.mes||r.mes)}${o.dia?" · día "+o.dia:""} · ${String(o.texto||"").slice(0,80)}`,
-      est:o.estado==="resuelta"?por("Resuelta",o.resueltaPor):"Abierta", tono:o.estado==="resuelta"?"good":"",
-      go:()=>{ S.mes=o.mes||r.mes; S.segFiltro=o.estado==="resuelta"?"todos":"obs"; irANotif("seg",null); }})));
   } else {
     sols.filter(s=>s.bp===yo && decidida(s)).forEach(s=>out.push({id:"v:"+s.id, k:"vac", fecha:s.revAtendidaAt||s.decididoAt, pend:esperaEnterado(s),
       t:s.revAtendidaAt?"Coordinación revisó tu solicitud de vacaciones":`Tu solicitud de vacaciones fue ${s.estado}`, d:`${rangoTxt(s.dias)}${s.comCoord?" · con comentario de coordinación":""}`,

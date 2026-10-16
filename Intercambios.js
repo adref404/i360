@@ -196,7 +196,7 @@ function apiResponderIntercambio(token, id, acepta, comentario, disp) {
       escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_[est], 'Comentario receptor': com, 'Respondido receptor': new Date(), 'Visto receptor': est });
       registrar_(u, acepta ? 'Intercambio aceptado' : 'Intercambio rechazado', 'Con ' + x.solNombre + ' · ' + rangoDiasTxt_(x.mes, x.dias), disp);
       if (acepta) notificarInt_(x.id, x.recNombre + ' aceptó el intercambio. Pasa a revisión de coordinación.', aprobadoresInt_().revision,
-        'Coordinación: revísalo en la pestaña "Intercambios" de la app.');
+        'Coordinación: revísalo en la pestaña "Intercambios de rol" de la app.');
       else notificarInt_(x.id, x.recNombre + ' rechazó el intercambio. La propuesta queda cerrada.', [], '');
       return { intercambios: intercambiosPara_(u) };
     });
@@ -265,7 +265,7 @@ function apiDecidirIntercambio(token, id, aprueba, comentario, pasoEsperado) {
         escribirFila_(sh, x.fila, { 'Estado': EST_INT_.en_jefe, 'Revisado coordinación': new Date(), 'Revisor': nombreDe_(yo), 'Comentario revisor': com });
         registrar_(yo, 'Intercambio aprobado por coordinación', x.solNombre + ' ↔ ' + x.recNombre + ' · ' + rango, '');
         notificarInt_(x.id, nombreDe_(yo) + ' aprobó el intercambio en coordinación. Pasa a aprobación final.', ap.final,
-          ap.final.map(nombreDe_).join(', ') + ': apruébalo o recházalo en la pestaña "Intercambios" de la app.');
+          ap.final.map(nombreDe_).join(', ') + ': apruébalo o recházalo en la pestaña "Intercambios de rol" de la app.');
         return { intercambios: intercambiosPara_(yo), aplicacion: '' };
       }
       // Decisión que cierra el intercambio

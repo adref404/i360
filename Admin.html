@@ -157,7 +157,7 @@ function admUsuarios(){
         const perfilCel = u.rol!=="admin" ? "" : editable
           ? `<select class="input perf-sel" data-perfil="${esc(u.bp)}" aria-label="Perfil de ${esc(u.nombre)}">${P.perfiles.map(p=>`<option value="${esc(p.nombre)}" ${p.nombre===u.perfil?"selected":""} ${perfilExcede(p)?"disabled":""}>${esc(p.nombre)}</option>`).join("")}</select>`
           : `<span class="sm2">${esc(u.perfil||"")}</span>`;
-        return `<tr><td><div class="persona">${avatarHTML(u)}<div><b>${esc(u.nombre)}</b><span class="sm2 mono">BP ${esc(u.bp)}</span>${u.cargo||u.area?`<span class="sm2">${esc([u.cargo,u.area].filter(Boolean).join(" · "))}</span>`:""}${u.correo?`<span class="sm2">${esc(u.correo)}</span>`:`<span class="sm2">Sin correo</span>`}</div></div></td>
+        return `<tr><td><div class="persona">${avatarHTML(u)}<div><b>${esc(u.nombre)}</b><span class="sm2 mono">BP ${esc(u.bp)}</span>${u.cargo||u.area?`<span class="sm2">${esc([u.cargo,u.area].filter(Boolean).join(" · "))}</span>`:""}${u.correo?`<span class="sm2">${esc(u.correo)}</span>`:`<span class="sm2">Sin correo</span>`}${S.adm.puedoGestionar&&(u.administrable||yo)?`<button class="btn link-btn" style="margin:2px 0 0 -4px;font-size:12px" data-uedit="${esc(u.bp)}">${u.correo?"Editar datos":"Agregar correo"}</button>`:""}</div></div></td>
           <td><span class="pill ${u.rol==="admin"?"acc":u.rol==="inst"?"info":""}">${u.principal?LOCK_SVG:""}${esc(u.rolTxt)}</span>${perfilCel}</td>
           <td>${cuenta}${u.codigoVence?`<span class="sm2">Código vigente hasta ${fechaCorta(u.codigoVence)}</span>`:""}</td>
           <td>${u.ultimoIngreso?fechaLarga(u.ultimoIngreso):"Nunca"}<span class="sm2">${u.ingresos} ingreso${u.ingresos===1?"":"s"}</span></td>
@@ -235,6 +235,25 @@ function abrirNuevoAdmin(){
     catch(err){ setCargando(b,false); $("#naErr",sc).textContent=err.message; } };
   setTimeout(()=>$("#naBp",sc).focus(),30);
 }
+function abrirEditarUsuario(bp){
+  const u=S.adm.usuarios.find(x=>x.bp===bp); if(!u) return;
+  const sc=document.createElement("div"); sc.className="scrim center";
+  sc.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="euT"><h2 id="euT">Editar datos</h2>
+    <p class="hint">${esc(u.rolTxt)} · <span class="mono">BP ${esc(u.bp)}</span>. El BP no se cambia aquí: une su acceso, su rol, sus vacaciones e intercambios.</p>
+    <form id="fEu" class="stack" style="gap:10px" autocomplete="off" novalidate>
+      <div class="field"><label for="euNom">Nombre corto</label><input class="input" id="euNom" value="${esc(u.nombreCorto||u.nombre)}" maxlength="60" required><p class="hint">Así aparece en la app y en los correos.</p></div>
+      <div class="field"><label for="euComp">Nombre completo</label><input class="input" id="euComp" value="${esc(u.nombreCompleto||"")}" maxlength="120"></div>
+      <div class="field"><label for="euMail">Correo corporativo</label><input class="input" id="euMail" type="email" value="${esc(u.correo||"")}" placeholder="nombre.apellido@latam.com"><p class="hint">Con correo recibe su código de acceso y los avisos de intercambios.</p></div>
+      <p class="err" id="euErr"></p>
+      <div class="row"><button class="btn primary" type="submit" id="euBtn">Guardar</button><button class="btn" type="button" id="euX">Cancelar</button></div></form></div>`;
+  document.body.appendChild(sc);
+  const close=()=>sc.remove(); sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#euX",sc).onclick=close;
+  $("#fEu",sc).onsubmit=async e=>{ e.preventDefault(); const b=$("#euBtn",sc); setCargando(b,true,"Guardando…");
+    try{ const r=await api("apiEditarUsuario",S.token,bp,{nombre:$("#euNom",sc).value,nombreCompleto:$("#euComp",sc).value,correo:$("#euMail",sc).value});
+      close(); toast(r.cambios?`Datos de ${r.nombre} guardados`:"No había cambios"); if(r.cambios){ S.adm=null; render(); } }
+    catch(err){ setCargando(b,false); $("#euErr",sc).textContent=err.message; } };
+  setTimeout(()=>$(u.correo?"#euNom":"#euMail",sc).focus(),30);
+}
 function abrirGenerarCodigo(bp){
   const u=S.adm.usuarios.find(x=>x.bp===bp); if(!u) return;
   const sc=document.createElement("div"); sc.className="scrim center";
@@ -249,7 +268,7 @@ function abrirGenerarCodigo(bp){
     try{ const r=await api("apiGenerarCodigo",S.token,bp,b.dataset.gen==="1");
       $("#gcBox",sc).innerHTML=`<h2>Código para ${esc(r.nombre)}</h2><div class="code-big" id="gcCode">${esc(r.codigo)}</div>
         ${r.enviado?`<div class="msg ok">Enviado a ${esc(r.correo)}.</div>`:r.errorCorreo?`<div class="msg err">No se envió el correo: ${esc(r.errorCorreo)}</div>`:""}
-        <p class="hint">Vence el ${fechaLarga(r.vence)}. Compártelo por un canal privado. La persona entra con “Activar cuenta o usar un código”, su BP, este código y su nueva contraseña. El código no se vuelve a mostrar.</p>
+        <p class="hint">Vence el ${fechaLarga(r.vence)}. Compártelo por un canal privado. La persona entra con “Genera código y activa tu cuenta”, su BP, este código y su nueva contraseña. El código no se vuelve a mostrar.</p>
         <div class="row"><button class="btn" id="gcCopy">Copiar código</button><button class="btn primary" id="gcOk">Listo</button></div>`;
       $("#gcCopy",sc).onclick=()=>{ try{ navigator.clipboard.writeText(r.codigo).then(()=>toast("Código copiado")); }catch(e){ toast("Selecciona el código y cópialo"); } };
       $("#gcOk",sc).onclick=()=>{ close(); S.adm=null; render(); };

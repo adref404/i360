@@ -126,7 +126,7 @@ function urlApp_() {
   if (CONFIG.appUrl) return CONFIG.appUrl;
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
 }
-/** Botón "Abrir INS 360" para el cuerpo HTML de los correos. */
+/** Botón "Abrir i360" para el cuerpo HTML de los correos. */
 function botonAppHtml_(texto) {
   const u = urlApp_(); if (!u) return '';
   return '<p style="margin:22px 0"><a href="' + u + '" style="background:#1B0088;color:#ffffff;text-decoration:none;font-weight:bold;padding:11px 20px;border-radius:8px;display:inline-block">' +
