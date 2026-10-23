@@ -1,9 +1,11 @@
 <script>
 /* IntercambiosVista — intercambio de actividades entre instructores.
    Solicitante propone (día o bloque de viaje) → receptor acepta o rechaza → coordinación aprueba o rechaza.
+   Rol abierto: el solicitante publica sus días sin elegir compañero; el primero que lo toma pasa a coordinación.
    Los datos vienen del servidor en S.intercambios (hoja Intercambios). */
 
-const INT_ACTIVO = ["pendiente","en_supervisor","en_jefe"];
+const INT_ACTIVO = ["abierto","pendiente","en_supervisor","en_jefe"];
+const esAbiertoX = x => x.tipo==="abierto";
 const intAprob = () => S.intAprob || {revision:[],final:[],soyRevisor:gestiona("int"),soyFinal:false,puedoConfigurar:false,admins:[]};
 const hayFinal = () => S.intAprob ? intAprob().final.length>0 : !!S.intConFinal;
 const intercambios = () => S.intercambios || [];
@@ -21,6 +23,7 @@ function actCeldaHTML(t, fuerte){
 function estadoIntVista(x, yo){
   const soySol=x.solBp===yo, soyRec=x.recBp===yo;
   switch(x.estado){
+    case "abierto": return soySol?["warn","Publicado · esperando quién lo tome"]:["info","Rol abierto · disponible"];
     case "pendiente": return soyRec?["warn","Te lo proponen · responde"]:soySol?["warn",`Esperando a ${x.recNombre}`]:["warn","Esperando al receptor"];
     case "en_supervisor": return ["info",soySol||soyRec?"En revisión":"En revisión de coordinación"];
     case "en_jefe": return ["info",soySol||soyRec?"En aprobación":"En aprobación final"];
@@ -115,6 +118,11 @@ function pintarIntPaso(O){
 /* ============ Detalle de un intercambio ============ */
 function detalleIntHTML(x, yo){
   const soySol=x.solBp===yo, soyRec=x.recBp===yo;
+  if(esAbiertoX(x) && !x.recBp){
+    const fo=x.dias.map((d,k)=>`<tr><td class="num" data-l="Día"><b>${d}</b></td><td data-l="Ofrece">${actCeldaHTML(x.actSol[k])}</td></tr>`).join("");
+    return `<div class="dt-wrap" style="margin-top:6px"><table class="dt int-dt"><thead><tr><th>Día</th><th>${soySol?"Ofreces":esc(x.solNombre)+" ofrece"}</th></tr></thead><tbody>${fo}</tbody></table></div>
+      ${x.comSol?`<div class="cmt"><b>${esc(soySol?"Tu comentario":x.solNombre)}:</b> ${esc(x.comSol)}</div>`:""}${x.aplicacion?`<span class="m">${esc(x.aplicacion)}</span>`:""}`;
+  }
   const nomA=soySol?"Tú":x.solNombre, nomB=soyRec?"Tú":x.recNombre;
   const lA=nomA==="Tú"?"Tú tenías":nomA+" tenía", lB=nomB==="Tú"?"Tú tenías":nomB+" tenía";
   const filas=x.dias.map((d,k)=>`<tr><td class="num" data-l="Día"><b>${d}</b></td><td data-l="${esc(lA)}">${actCeldaHTML(x.actSol[k])}</td><td data-l="${esc(lB)}">${actCeldaHTML(x.actRec[k])}</td></tr>`).join("");
@@ -130,30 +138,92 @@ function detalleIntHTML(x, yo){
 function intercambiosCardHTML(bp, desdeAdmin){
   const L=intercambios().filter(x=>x.solBp===bp||x.recBp===bp).sort((a,b)=>String(b.creado).localeCompare(String(a.creado)));
   const propio=!desdeAdmin && S.usuario.bp===bp;
-  if(!L.length) return propio?`<div class="card"><h3>Intercambios de rol</h3><p class="hint" style="margin-top:4px">Para proponer un intercambio, toca un día de tu rol (desde mañana) y elige “Proponer intercambio”.</p></div>`:"";
+  if(!L.length) return propio?`<div class="card"><h3>Intercambios de rol</h3><p class="hint" style="margin-top:4px">Para proponer un intercambio o publicar un rol abierto, toca un día de tu rol (desde mañana).</p></div>`:"";
   const act=L.filter(x=>INT_ACTIVO.includes(x.estado)), hist=L.filter(x=>!INT_ACTIVO.includes(x.estado)).slice(0,8);
   const item=x=>{ const soySol=x.solBp===bp, otro=soySol?x.recNombre:x.solNombre;
-    return `<div class="obs-item solv" id="miint-${esc(x.id)}"><div class="h"><b>${soySol?"Propusiste a":"Te propone"} ${esc(otro)}</b>${pillInt(x,bp)}</div>
+    const tit=esAbiertoX(x) ? (soySol ? (x.recBp?`Tu rol abierto lo tomó ${esc(x.recNombre)}`:"Publicaste tu rol abierto") : `Tomaste el rol abierto de ${esc(x.solNombre)}`)
+      : `${soySol?"Propusiste a":"Te propone"} ${esc(otro)}`;
+    return `<div class="obs-item solv" id="miint-${esc(x.id)}"><div class="h"><b>${tit}</b>${pillInt(x,bp)}</div>
       <span class="hint">${esc(mesLargo(x.mes))} · ${esc(diasIntTxt(x))} · ${plural(x.dias.length,"día")}</span>
       ${pasosIntHTML(x)}${detalleIntHTML(x,bp)}
       ${propio&&x.recBp===bp&&x.estado==="pendiente"?`<div class="row"><button class="btn sm primary" data-intresp="${esc(x.id)}" data-ok="1">Aceptar</button><button class="btn sm" data-intresp="${esc(x.id)}" data-ok="0">Rechazar</button></div>`:""}
-      ${propio&&soySol&&INT_ACTIVO.includes(x.estado)?`<div class="row"><button class="btn sm" data-intcancel="${esc(x.id)}">Cancelar propuesta</button></div>`:""}</div>`; };
+      ${propio&&soySol&&INT_ACTIVO.includes(x.estado)?`<div class="row"><button class="btn sm" data-intcancel="${esc(x.id)}" data-abierto="${x.estado==="abierto"?1:0}">${x.estado==="abierto"?"Retirar publicación":"Cancelar propuesta"}</button></div>`:""}</div>`; };
   return `<div class="card stack" style="gap:10px"><div class="row between"><h3>Intercambios de rol</h3>${act.length?`<span class="pill warn">${act.length} en curso</span>`:""}</div>
     ${act.length?`<div class="obs">${act.map(item).join("")}</div>`:""}
     ${hist.length?`<details ${act.length?"":"open"}><summary class="hint" style="cursor:pointer">Historial (${hist.length})</summary><div class="obs" style="margin-top:8px">${hist.map(item).join("")}</div></details>`:""}
-    ${propio?`<p class="hint">Para proponer uno nuevo, toca un día de tu rol (desde mañana).</p>`:""}</div>`;
+    ${propio?`<p class="hint">Para proponer uno nuevo o publicar un rol abierto, toca un día de tu rol (desde mañana).</p>`:""}</div>`;
+}
+
+/* ============ Rol abierto (instructor) ============
+   Se publican los días sin elegir compañero; cualquiera del rol del mes puede tomarlos y pasa a coordinación. */
+const abiertosDisponibles = bp => intercambios().filter(x=>esAbiertoX(x) && x.estado==="abierto" && x.solBp!==bp)
+  .sort((a,b)=>a.mes.localeCompare(b.mes)||a.dias[0]-b.dias[0]);
+function abiertosCardHTML(bp){
+  const L=abiertosDisponibles(bp), mio=m=>(MO.personas[bp]||{meses:{}}).meses[m];
+  const item=x=>{ const cel=mio(x.mes);
+    const filas=x.dias.map((d,k)=>`<tr><td class="num" data-l="Día"><b>${d}</b> <span class="hint">${DOWS[dowOf(x.mes,d)]}</span></td><td data-l="${esc(x.solNombre)} ofrece">${actCeldaHTML(x.actSol[k],true)}</td><td data-l="Tú tienes">${cel?actCeldaHTML((cel[d-1]||{}).raw):`<span class="hint">—</span>`}</td></tr>`).join("");
+    return `<div class="obs-item solv" id="abierto-${esc(x.id)}"><div class="h"><b>${esc(x.solNombre)}</b>${pillInt(x,bp)}</div>
+      <span class="hint">${esc(mesLargo(x.mes))} · ${esc(diasIntTxt(x))} · ${plural(x.dias.length,"día")}</span>
+      <div class="dt-wrap" style="margin-top:6px"><table class="dt int-dt"><thead><tr><th>Día</th><th>${esc(x.solNombre)} ofrece</th><th>Tú tienes</th></tr></thead><tbody>${filas}</tbody></table></div>
+      ${x.comSol?`<div class="cmt"><b>${esc(x.solNombre)}:</b> ${esc(x.comSol)}</div>`:""}
+      ${cel?`<div class="row"><button class="btn sm primary" data-inttomar="${esc(x.id)}">Tomar este rol</button></div>`:`<p class="hint">No figuras en el rol de ${esc(mesLargo(x.mes))}.</p>`}</div>`; };
+  return `<div class="card stack" style="gap:10px"><div class="row between"><h3>Roles abiertos</h3>${L.length?`<span class="pill info">${L.length} disponible${L.length===1?"":"s"}</span>`:""}</div>
+    ${L.length?`<p class="hint">Compañeros que ofrecen su actividad. Lo toma el primero que lo pida; después lo revisa coordinación.</p><div class="obs">${L.map(item).join("")}</div>`
+      :`<p class="hint">Nadie tiene un rol abierto por ahora. Para publicar el tuyo, toca un día de tu rol (desde mañana) y elige “Publicar como rol abierto”.</p>`}</div>`;
+}
+function abrirPublicarAbierto(mes, d){
+  const pe=MO.personas[S.usuario.bp]; if(!pe||!pe.meses[mes]) return;
+  const cel={}; pe.meses[mes].forEach((x,k)=>{ cel[k+1]=x; });
+  const [L,R]=bloqueDe(cel,d,1,pe.meses[mes].length);
+  abrirPanel("Publicar rol abierto", esc(`${cap(DOW[dowOf(mes,d)])} ${d} de ${mesInfo(mes).nombre}`), `<div id="abBody"></div>`);
+  pintarPublicarAbierto({mes,d,L,R,cel,soloDia:false,com:""});
+}
+function pintarPublicarAbierto(O){
+  const b=document.getElementById("abBody"); if(!b) return;
+  const esBloque=O.R>O.L, d0=O.soloDia?O.d:O.L, d1=O.soloDia?O.d:O.R, dias=[]; for(let k=d0;k<=d1;k++) dias.push(k);
+  const pasado=dias.some(k=>fechaDia(O.mes,k)<=S.hoy);
+  const filas=dias.map(k=>`<tr><td class="num" data-l="Día"><b>${k}</b> <span class="hint">${DOWS[dowOf(O.mes,k)]}</span></td><td data-l="Ofreces">${actCeldaHTML((O.cel[k]||{}).raw)}</td></tr>`).join("");
+  b.innerHTML=`<p class="hint">Tu actividad queda visible para los instructores del rol de ${esc(mesInfo(O.mes).nombre)}. El primero que la tome te da la suya a cambio y pasa a revisión de coordinación${hayFinal()?" y aprobación final":""}. El rol cambia recién cuando se aprueba.</p>
+    ${esBloque?`<div class="note"><b>${O.soloDia?"Solo el día "+O.d:"Se publica el bloque completo"}</b> (días ${O.L} a ${O.R}). ${O.soloDia?"Ojo: si es un viaje con pernocta, la ida y la vuelta deben quedar con la misma persona.":"Incluye el día en blanco y los vuelos de ida y vuelta, para que el viaje quede con una sola persona."}
+      <label class="row" style="gap:8px;margin-top:6px"><input type="checkbox" id="abSolo" ${O.soloDia?"checked":""}> Publicar solo el día ${O.d}</label></div>`:""}
+    <div class="dt-wrap"><table class="dt int-dt"><thead><tr><th>Día</th><th>Ofreces</th></tr></thead><tbody>${filas}</tbody></table></div>
+    ${pasado?`<div class="msg err">El bloque incluye días que ya pasaron o son hoy; marca “Publicar solo el día ${O.d}” o elige otro día.</div>`:""}
+    <div class="field"><label for="abCom">Comentario para tus compañeros <span class="hint">(opcional)</span></label><textarea class="input" id="abCom" maxlength="500" rows="3" placeholder="Ej.: necesito ese día libre; me sirve una reserva o un simulador.">${esc(O.com)}</textarea></div>
+    <p class="err" id="abErr"></p>
+    <div class="row"><button class="btn primary" id="abEnviar" ${pasado?"disabled":""}>Publicar rol abierto</button></div>`;
+  const so=document.getElementById("abSolo"); if(so) so.onchange=()=>{ O.soloDia=so.checked; O.com=document.getElementById("abCom").value; pintarPublicarAbierto(O); };
+  document.getElementById("abCom").oninput=e=>{ O.com=e.target.value; };
+  document.getElementById("abEnviar").onclick=async e=>{ const btn=e.currentTarget; setCargando(btn,true,"Publicando…");
+    try{ const r=await api("apiPublicarAbierto",S.token,O.mes,dias,O.com,dispositivo()); S.intercambios=r.intercambios; cerrarPanel(); toast("Rol abierto publicado: tus compañeros ya lo pueden ver"); render(); }
+    catch(x){ setCargando(btn,false); document.getElementById("abErr").textContent=x.message; } };
+}
+function abrirTomarAbierto(id){
+  const x=intPorId(id); if(!x) return;
+  const cel=(MO.personas[S.usuario.bp]||{meses:{}}).meses[x.mes]; if(!cel){ toast("No figuras en el rol de ese mes."); return; }
+  const filas=x.dias.map((d,k)=>`<tr><td class="num" data-l="Día"><b>${d}</b> <span class="hint">${DOWS[dowOf(x.mes,d)]}</span></td><td data-l="Tú tienes">${actCeldaHTML((cel[d-1]||{}).raw)}</td><td class="int-flecha">→</td><td data-l="Pasarías a tener">${actCeldaHTML(x.actSol[k],true)}</td></tr>`).join("");
+  const nom1=esc(x.solNombre.split(" ")[0]);
+  abrirPanel("Tomar rol abierto", esc(`${x.solNombre} · ${mesLargo(x.mes)} · ${diasIntTxt(x)}`),
+    `${x.comSol?`<div class="cmt"><b>${esc(x.solNombre)}:</b> ${esc(x.comSol)}</div>`:""}
+    <div class="dt-wrap"><table class="dt int-dt"><thead><tr><th>Día</th><th>Tú tienes</th><th></th><th>Pasarías a tener</th></tr></thead><tbody>${filas}</tbody></table></div>
+    <form id="fAbT" class="stack" style="gap:8px"><div class="field"><label for="abTCom">Comentario para ${nom1} y coordinación <span class="hint">(opcional)</span></label><textarea class="input" id="abTCom" maxlength="500" rows="3"></textarea></div>
+      <p class="err" id="abTErr"></p><div class="row"><button class="btn primary" type="submit" id="abTBtn">Tomar este rol</button><button class="btn" type="button" id="abTX">Cancelar</button></div>
+      <p class="hint">${nom1} hará tu actividad y tú la suya. Al tomarlo pasa directo a revisión de coordinación${hayFinal()?" y luego a aprobación final":""}; el rol cambia recién cuando se aprueba.</p></form>`);
+  document.getElementById("abTX").onclick=cerrarPanel;
+  document.getElementById("fAbT").onsubmit=async e=>{ e.preventDefault(); const b=document.getElementById("abTBtn"); setCargando(b,true,"…");
+    try{ const r=await api("apiTomarAbierto",S.token,id,document.getElementById("abTCom").value,dispositivo()); S.intercambios=r.intercambios; cerrarPanel(); toast("Lo tomaste: ahora lo revisa coordinación"); render(); }
+    catch(err){ setCargando(b,false); const el=document.getElementById("abTErr"); if(el) el.textContent=err.message; } };
 }
 
 /* ============ Pestaña de coordinación ============ */
 function admIntercambios(){
   const A=intAprob(), L=intercambios().slice().sort((a,b)=>String(b.creado).localeCompare(String(a.creado)));
-  const rev=L.filter(x=>x.estado==="en_supervisor"), fin=L.filter(x=>x.estado==="en_jefe"), esp=L.filter(x=>x.estado==="pendiente"), hist=L.filter(x=>!INT_ACTIVO.includes(x.estado));
+  const rev=L.filter(x=>x.estado==="en_supervisor"), fin=L.filter(x=>x.estado==="en_jefe"), esp=L.filter(x=>x.estado==="pendiente"), ab=L.filter(x=>x.estado==="abierto"), hist=L.filter(x=>!INT_ACTIVO.includes(x.estado));
   const aprob=hist.filter(x=>x.estado==="aprobado").length, rech=hist.filter(x=>/^rechazado/.test(x.estado)).length;
   const nombres=l=>l.map(v=>esc(v.nombre)).join(", ");
   const item=(x,paso)=>{ const puedo= paso==="revision"?A.soyRevisor : paso==="final"?A.soyFinal : false;
     const btnOk= paso==="revision" ? (hayFinal()?"Aprobar y enviar a aprobación final":"Aprobar y aplicar en el rol") : "Aprobar y aplicar en el rol";
-    return `<div class="obs-item solv" id="int-${esc(x.id)}"><div class="h"><b>${esc(x.solNombre)} ⇄ ${esc(x.recNombre)}</b>${pillInt(x,"")}</div>
-    <span class="hint">${esc(mesLargo(x.mes))} · ${esc(diasIntTxt(x))} · ${plural(x.dias.length,"día")}</span>
+    return `<div class="obs-item solv" id="int-${esc(x.id)}"><div class="h"><b>${esc(x.solNombre)} ⇄ ${x.recBp?esc(x.recNombre):"(sin tomar)"}</b>${pillInt(x,"")}</div>
+    <span class="hint">${esc(mesLargo(x.mes))} · ${esc(diasIntTxt(x))} · ${plural(x.dias.length,"día")}${esAbiertoX(x)?" · rol abierto":""}</span>
     ${pasosIntHTML(x)}${detalleIntHTML(x,"")}
     ${puedo?`<div class="row"><button class="btn sm primary" data-intdec="${esc(x.id)}" data-ok="1" data-paso="${paso}">${btnOk}</button><button class="btn sm" data-intdec="${esc(x.id)}" data-ok="0" data-paso="${paso}">Rechazar</button></div>`
       :paso?`<p class="hint">${paso==="revision"?`Lo revisa: ${nombres(A.revision)||"coordinación"}`:`Lo aprueba: ${nombres(A.final)}`}.</p>`:""}</div>`; };
@@ -172,6 +242,7 @@ function admIntercambios(){
       ${col("Aprobación final",fin,"final",hayFinal()?"No hay intercambios esperando aprobación final.":"No hay aprobación final configurada.",`<p class="hint">Al aprobar, la app verifica que el Google Sheet siga igual, intercambia las celdas (texto, colores y formato), deja una nota y sincroniza.</p>`)}
     </div>
     ${col("Esperando al receptor",esp,null,"Ninguno.")}
+    ${col("Roles abiertos publicados",ab,null,"Ninguno.",`<p class="hint">Instructores que publicaron su actividad para que cualquiera la tome. Cuando alguien la toma, llega a revisión de coordinación.</p>`)}
     <div class="card stack" style="gap:10px"><h3>Historial</h3>${hist.length?`<div class="obs">${hist.slice(0,40).map(x=>item(x,null)).join("")}</div>`:`<p class="empty">Todavía no hay intercambios cerrados.</p>`}</div>
   </div>`;
 }
@@ -184,9 +255,10 @@ function pasosIntHTML(x){
   const mismoMin=(a,b)=>a&&b&&Math.abs(new Date(a)-new Date(b))<60000;
   const directo=g==="aprobado" && (!x.revisado || (x.supervisor===x.revisor && mismoMin(x.revisado,x.decidido)));
   const rr=g==="rechazado_receptor", rs=g==="rechazado_supervisor", rj=g==="rechazado_jefe";
-  const pasos=[{c:"ok", t:"Solicitado", q:x.solNombre, f:x.creado}];
-  let c=st(!!x.respondido&&!rr, g==="pendiente", rr);
-  pasos.push({c, t:rr?"Rechazado":c==="ok"?"Aceptado":c==="act"?"Esperando respuesta":"Respuesta", q:x.recNombre, f:x.respondido});
+  const ab=esAbiertoX(x);
+  const pasos=[{c:"ok", t:ab?"Publicado":"Solicitado", q:x.solNombre, f:x.creado}];
+  let c=st(!!x.respondido&&!rr, g==="pendiente"||g==="abierto", rr);
+  pasos.push({c, t:rr?"Rechazado":c==="ok"?(ab?"Tomado":"Aceptado"):c==="act"?(ab?"Esperando quién lo tome":"Esperando respuesta"):(ab?"Tomado":"Respuesta"), q:x.recNombre, f:x.respondido});
   c=st((!!x.revisado&&!rs)||directo, g==="en_supervisor", rs);
   pasos.push({c, t:rs?"Rechazado":c==="ok"?(directo?"Aprobado":"Revisado"):c==="act"?"En revisión":"Revisión", q:x.revisor||(directo?x.supervisor:""), f:x.revisado||(directo||rs?x.decidido:"")});
   if(!directo && (hayFinal() || ["en_jefe","rechazado_jefe","aprobado"].includes(g))){
@@ -194,7 +266,7 @@ function pasosIntHTML(x){
     pasos.push({c, t:rj?"Rechazado":c==="ok"?"Aprobado":c==="act"?"En aprobación":"Aprobación", q:x.supervisor, f:x.decidido});
   }
   // Cancelado o vencido: se marca en la etapa donde quedó
-  if(g==="cancelado"||x.estado==="vencido"){ const p=pasos.find(p=>!p.c); if(p){ p.c="off"; p.t=g==="cancelado"?"Cancelado":"Vencido"; p.q=g==="cancelado"?x.solNombre:""; p.f=g==="cancelado"?x.decidido:""; } }
+  if(g==="cancelado"||x.estado==="vencido"){ const p=pasos.find(p=>!p.c); if(p){ p.c="off"; p.t=g==="cancelado"?"Cancelado":"Vencido"; p.q=g==="cancelado"&&!x.aplicacion?x.solNombre:""; p.f=g==="cancelado"?x.decidido:""; } }
   const fecha=iso=>{ const d=new Date(iso); return isNaN(d)?null:[d.toLocaleDateString("es-PE",{day:"numeric",month:"short"}), d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit",hour12:false})]; };
   return `<div class="int-pasos-w"><ol class="int-pasos">${pasos.map(p=>{ const hecho=p.c==="ok"||p.c==="rech"||p.c==="off", f=hecho&&p.f?fecha(p.f):null;
     return `<li class="${p.c}"><i></i><span><b>${esc(p.t)}</b>${hecho&&p.q?`<small class="q">${esc(p.q)}</small>`:""}${f?`<small>${esc(f[0])} ${esc(f[1])}</small>`:""}</span></li>`; }).join("")}</ol></div>`;
@@ -243,9 +315,10 @@ function abrirDecidirInt(id, aprueba, paso){
     catch(err){ setCargando(b,false); document.getElementById("intDErr").textContent=err.message; } };
 }
 async function cancelarInt(id, btn){
-  if(!confirm("¿Cancelar esta propuesta de intercambio?")) return;
+  const ab=btn.dataset.abierto==="1";
+  if(!confirm(ab?"¿Retirar tu rol abierto? Tus compañeros ya no lo verán.":"¿Cancelar esta propuesta de intercambio?")) return;
   setCargando(btn,true,"…");
-  try{ const r=await api("apiCancelarIntercambio",S.token,id,dispositivo()); S.intercambios=r.intercambios; toast("Propuesta cancelada"); render(); }
+  try{ const r=await api("apiCancelarIntercambio",S.token,id,dispositivo()); S.intercambios=r.intercambios; toast(ab?"Rol abierto retirado":"Propuesta cancelada"); render(); }
   catch(e){ setCargando(btn,false); toast(e.message); }
 }
 
@@ -258,10 +331,13 @@ function notifsIntercambio(){
     const go=esAdmin()&&x.solBp!==yo&&x.recBp!==yo?()=>irANotif("int","int-"+x.id):()=>irANotif("mi","miint-"+x.id);
     if(x.recBp===yo){ const e=est(x);
       out.push({id:"ir:"+x.id, k:"int", fecha:x.estadoGuardado==="pendiente"?x.creado:(x.decidido||x.respondido||x.creado), pend:intNoVisto(x,yo),
-        t:`${x.solNombre} te propone un intercambio`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:e.t, tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
-    if(x.solBp===yo && x.estadoGuardado!=="pendiente" && x.estadoGuardado!=="cancelado"){ const e=est(x);
+        t:esAbiertoX(x)?`Tomaste el rol abierto de ${x.solNombre}`:`${x.solNombre} te propone un intercambio`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:e.t, tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
+    if(x.solBp===yo && !["pendiente","cancelado","abierto"].includes(x.estadoGuardado)){ const e=est(x);
       out.push({id:"is:"+x.id, k:"int", fecha:x.decidido||x.respondido, pend:intNoVisto(x,yo),
-        t:`Tu intercambio con ${x.recNombre}: ${e.t.toLowerCase()}`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:intNoVisto(x,yo)?"Sin ver":"Visto", tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
+        t:esAbiertoX(x)?`${x.recNombre} tomó tu rol abierto: ${e.t.toLowerCase()}`:`Tu intercambio con ${x.recNombre}: ${e.t.toLowerCase()}`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:intNoVisto(x,yo)?"Sin ver":"Visto", tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
+    if(!esAdmin() && x.estado==="abierto" && x.solBp!==yo)
+      out.push({id:"io:"+x.id, k:"int", fecha:x.creado, pend:false, t:`${x.solNombre} publicó un rol abierto`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`,
+        est:"Disponible", tono:"", go:()=>irANotif("mi","abierto-"+x.id)});
     if(esAdmin() && nivelSec("int")>=1 && x.respondido && x.estadoGuardado!=="rechazado_receptor"){ const e=est(x), A=intAprob();
       const pend=(x.estado==="en_supervisor"&&A.soyRevisor)||(x.estado==="en_jefe"&&A.soyFinal);
       const titulo=x.estado==="en_supervisor"?"Intercambio por revisar":x.estado==="en_jefe"?"Intercambio en aprobación final":"Intercambio";
@@ -294,6 +370,7 @@ function wireIntercambios(){
     try{ S.intAprob=await api("apiAprobadoresIntercambio",S.token,{revision:marcados("rev"),final:marcados("fin")}); toast("Aprobadores guardados"); render(); }
     catch(e){ setCargando(apB,false); document.getElementById("apErr").textContent=e.message; } };
   document.querySelectorAll("[data-intcancel]").forEach(b=>b.onclick=()=>cancelarInt(b.dataset.intcancel,b));
+  document.querySelectorAll("[data-inttomar]").forEach(b=>b.onclick=()=>abrirTomarAbierto(b.dataset.inttomar));
   document.querySelectorAll("[data-ocultar]").forEach(b=>b.onclick=async()=>{ const vis=b.dataset.vis==="1"; setCargando(b,true,"…");
     try{ await api("apiVisibilidadMes",S.token,b.dataset.ocultar,vis); toast(vis?`${mesLargo(b.dataset.ocultar)} visible para instructores`:`${mesLargo(b.dataset.ocultar)} oculto a instructores`); S.fuentes=null; await recargar(); render(); }
     catch(e){ setCargando(b,false); toast(e.message); } });

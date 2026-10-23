@@ -37,13 +37,7 @@ function instalar() {
   // Fuentes (Google Sheets mensuales)
   registrarFuentesIniciales_(log);
 
-  // Solicitudes y Vigencias (datos que antes venían incrustados en la página)
-  const so = hoja_(CONFIG.hojas.solicitudes, ENC_SOLICITUDES_);
-  if (so.getLastRow() < 2 && SEMILLA_SOLICITUDES.length) {
-    so.getRange(2, 1, SEMILLA_SOLICITUDES.length, 6).setValues(SEMILLA_SOLICITUDES.map(s => [s.bp, s.nombre, s.desde, s.hasta, s.tipo, s.estado]));
-    so.getRange(2, 1, SEMILLA_SOLICITUDES.length, 1).setNumberFormat('0');
-    log.push('Solicitudes: ' + SEMILLA_SOLICITUDES.length + ' filas iniciales.');
-  }
+  // Vigencias (datos que antes venían incrustados en la página)
   const vi = hoja_(CONFIG.hojas.vigencias, ENC_VIGENCIAS_);
   if (vi.getLastRow() < 2) {
     const usu = {}; usuarios_().forEach(u => usu[u.bp] = u.nombre);
@@ -66,7 +60,6 @@ function instalar() {
     const ya = filas_(ins).rows.map(r => normTxt_(r[0])).concat([normTxt_(ins.getRange(1, 1).getValue())]);
     [
       ['Fuentes', 'Un Google Sheet por mes (hoja ROL INS). Se agregan desde la app (Actualizar rol › Conectar Google Sheet) o escribiendo Mes (aaaa-mm) y el enlace. Activo = NO pausa la lectura.'],
-      ['Solicitudes', 'Pedidos de jefatura e instructores: BP, Nombre, Desde, Hasta, Tipo y Estado (asignado / no se asignó).'],
       ['Vigencias', 'Experiencia reciente por BP (hoja BG INS). Escribe VENCIDO en la columna programada para generar una alerta.'],
       ['Vacaciones', 'Una fila por instructor: BP, nombre y fechas DGAC (inicio de su periodo de vacaciones).'],
       ['VacacionesPeriodos', 'Una fila por instructor y periodo DGAC: BP, Periodo (p. ej. 2027-28), Derecho y Tomados (referencia). Para un periodo nuevo agrega una fila; si falta, la app estima +1 día por renovación (máximo 45).'],

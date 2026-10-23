@@ -85,7 +85,7 @@ function vistaUsuario(bp, desdeAdmin){
       ${enFreeze?`<div class="row between">${toggleColSheetHTML()}</div>`+codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
       ${enFreeze?`<div style="border-top:1px solid var(--line);padding-top:12px"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sMc)}</div>`:""}
     </div>
-    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
+    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${propio&&S.usuario.rol==="inst"?abiertosCardHTML(bp):""}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
   </div>
   <div class="u-grid" style="margin-top:16px">
     <div class="stack">
@@ -224,8 +224,9 @@ function abrirDia(bp,mes,d){
     <span class="hint">${esc(pe.nombre)}, ${DOW[dowOf(mes,d)]} ${d} de ${mesInfo(mes).nombre} ${mesInfo(mes).y}</span><h2 id="shT">${esc(x.titulo)}</h2>
     <span class="chipk" style="align-self:flex-start">${sw(x.k)}${esc(KC[x.k].nom)}${x.sub?` · ${esc(x.sub)}`:""}</span>
     ${x.meta?`<div class="meta">${esc(x.meta)}</div>`:""}${x.pernocta?`<span class="row" style="gap:8px"><i class="dot-v"></i>Este vuelo genera viático</span>`:""}
-    ${intDia.map(z=>`<div class="note">⇄ Intercambio en curso con ${esc(z.solBp===bp?z.recNombre:z.solNombre)}: ${esc(estadoIntVista(z,bp)[1])}</div>`).join("")}
-    ${puedeInt&&!intDia.some(z=>z.estado==="en_supervisor"||(z.estado==="pendiente"&&z.solBp===bp))?`<button class="btn" type="button" id="btnInt">⇄ ${intDia.length?"Proponer otro intercambio para este día":"Proponer intercambio de este día"}</button>`:""}
+    ${intDia.map(z=>`<div class="note">${z.estado==="abierto"?"📢 Publicado como rol abierto: esperando que alguien lo tome":`⇄ Intercambio en curso con ${esc(z.solBp===bp?z.recNombre:z.solNombre)}: ${esc(estadoIntVista(z,bp)[1])}`}</div>`).join("")}
+    ${puedeInt&&!intDia.some(z=>z.estado==="en_supervisor"||z.estado==="abierto"||(z.estado==="pendiente"&&z.solBp===bp))?`<button class="btn" type="button" id="btnInt">⇄ ${intDia.length?"Proponer otro intercambio para este día":"Proponer intercambio de este día"}</button>
+      <button class="btn" type="button" id="btnAb">📢 Publicar como rol abierto</button>`:""}
     ${x.raw?`<details><summary class="hint" style="cursor:pointer">Texto original del rol</summary><div class="meta" style="margin-top:6px">${esc(x.raw)}</div></details>`:""}
     ${puedeObs?`<form id="fObs" class="stack" style="gap:8px"><label class="hint" for="obsTxt">¿Algo no calza en este día? Cuéntale a coordinación.</label><textarea class="input" id="obsTxt" maxlength="1500"></textarea>
       <div class="row"><button class="btn" type="submit" id="obsBtn">Enviar observación</button><button class="btn primary" type="button" id="cerrar" style="flex:1">Cerrar</button></div></form>`:`<button class="btn primary" id="cerrar">Cerrar</button>`}</div>`;
@@ -233,6 +234,7 @@ function abrirDia(bp,mes,d){
   const close=()=>{ sc.remove(); document.removeEventListener("keydown",k); }; const k=e=>{ if(e.key==="Escape") close(); };
   document.addEventListener("keydown",k); sc.addEventListener("click",e=>{ if(e.target===sc) close(); }); $("#cerrar",sc).onclick=close;
   const bi=$("#btnInt",sc); if(bi) bi.onclick=()=>{ close(); abrirIntercambio(mes,d); };
+  const ba=$("#btnAb",sc); if(ba) ba.onclick=()=>{ close(); abrirPublicarAbierto(mes,d); };
   const f=$("#fObs",sc); if(f) f.onsubmit=async e=>{ e.preventDefault(); const t=$("#obsTxt",sc).value.trim(); if(!t) return;
     const b=$("#obsBtn",sc); setCargando(b,true,"Enviando…");
     try{ const r=await api("apiObservacion",S.token,mes,d,t); S.resp[mes+"_"+bp]=r; close(); render(); toast("Observación enviada a coordinación"); }

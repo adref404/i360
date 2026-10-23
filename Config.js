@@ -8,7 +8,7 @@
  *   Fuentes.gs   Lectura de los Google Sheets mensuales (ROL INS) y sincronización
  *   Datos.gs     Datos para el panel (filtrados por rol) y respuestas de instructores
  *   Setup.gs     instalar() y utilidades que se ejecutan desde el editor
- *   Semilla.gs   Datos iniciales de Solicitudes y Vigencias (BG INS)
+ *   Semilla.gs   Datos iniciales de Vigencias (BG INS)
  *   Vacaciones.gs        Vacaciones por periodo DGAC: hojas, ventana de solicitud, validación, aprobación y migración
  *   SemillaVacaciones.gs Datos iniciales de vacaciones (Vacaciones_INSTRUCTORES_1.xlsx)
  *   Intercambios.gs      Intercambio de actividades entre instructores y meses ocultos a instructores
@@ -47,7 +47,6 @@ const CONFIG = {
     registro: 'Registro',
     permisos: 'Permisos',
     fuentes: 'Fuentes',
-    solicitudes: 'Solicitudes',
     vigencias: 'Vigencias',
     vacaciones: 'Vacaciones',
     vacDias: 'VacacionesDias',
@@ -67,6 +66,9 @@ const CONFIG = {
     '6019028'   // Fernando Celadita · soporte
     , '31096'   // Jefe de instructores: reemplaza por su BP y quita las barras //
   ],
+
+  // Rol abierto: true = al publicarlo se avisa por correo (copia oculta) a los instructores del rol de ese mes.
+  intAbiertoCorreo: true,
 
   // Vacaciones: en estos meses, los días de VacacionesProgramado que no tienen fecha exacta
   // (en VacacionesDias o VacacionesBloques) se cuentan igual como programados.

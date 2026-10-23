@@ -128,7 +128,7 @@ function catTablero(p){
   return p.cat;
 }
 
-/* P = respuesta de apiDatos: {meses, dotacion, vigencias, solicitudes} */
+/* P = respuesta de apiDatos: {meses, dotacion, vigencias} */
 function construirModelo(P){
   const meses = {};
   (P.meses||[]).forEach(m=>{ if(/^\d{4}-\d{2}$/.test(m.mes)) meses[m.mes]={...m}; });
@@ -151,7 +151,7 @@ function construirModelo(P){
     pe.bg=(P.vigencias||{})[pe.bp]||null;
     pe.perfil="tierra";
   });
-  return {meses, orden, personas, solicitudes:P.solicitudes||[], perfilAnio:null};
+  return {meses, orden, personas, perfilAnio:null};
 }
 
 /* Perfil del año del mes elegido: vuelo, tierra o nd (ausencia prolongada) */

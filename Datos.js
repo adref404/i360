@@ -1,27 +1,11 @@
 /**
  * Datos del panel. Lo que se envía al navegador depende del rol:
- * - Instructor: solo su fila de cada mes, sus respuestas, sus solicitudes y sus vigencias.
+ * - Instructor: solo su fila de cada mes, sus respuestas y sus vigencias.
  * - Coordinación (o instructor con vistas de equipo en Permisos): todo el equipo.
  */
 
 const ENC_RESP_ = ['id', 'json', 'actualizadoAt'];
-const ENC_SOLICITUDES_ = ['BP', 'Nombre', 'Desde', 'Hasta', 'Tipo', 'Estado'];
 const ENC_VIGENCIAS_ = ['BP', 'Nombre', 'Experiencia reciente programada', 'Última experiencia reciente'];
-
-function leerSolicitudes_() {
-  const t = filas_(hoja_(CONFIG.hojas.solicitudes));
-  if (!t.rows.length) return [];
-  const c = { bp: col_(t.head, 'bp'), nom: col_(t.head, 'nombre'), de: col_(t.head, 'desde'), a: col_(t.head, 'hasta'), ti: col_(t.head, 'tipo', 'solicitud'), es: col_(t.head, 'estado') };
-  return t.rows.map(r => {
-    const est = normTxt_(celda_(r, c.es));
-    return {
-      bp: bpTxt_(celda_(r, c.bp)), nombre: String(celda_(r, c.nom) || '').trim(),
-      desde: fechaISO_(celda_(r, c.de)), hasta: fechaISO_(celda_(r, c.a)) || fechaISO_(celda_(r, c.de)),
-      tipo: String(celda_(r, c.ti) || '').trim(),
-      estado: /^asignad/.test(est) ? 'asignado' : /^no/.test(est) ? 'no se asignó' : (est ? 'pendiente' : 'pendiente')
-    };
-  }).filter(x => x.bp && x.desde && /^\d{4}-\d{2}-\d{2}$/.test(x.desde));
-}
 
 function leerVigencias_() {
   const t = filas_(hoja_(CONFIG.hojas.vigencias));
@@ -88,7 +72,6 @@ function apiDatos(token) {
       hoy: hoyISO_(),
       meses: meses,
       respuestas: respuestas,
-      solicitudes: leerSolicitudes_().filter(s => equipo || mio(s.bp)),
       vigencias: vigencias,
       dotacion: dotacion,
       vac: datosVac_(equipo, u.bp),

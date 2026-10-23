@@ -10,3 +10,4 @@ fuentes/**
 subir.sh
 .clasp*.json
 *.bak
+subir.ps1

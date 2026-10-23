@@ -5,14 +5,18 @@
  * si acepta, coordinación (supervisor) aprueba o rechaza → al aprobar, se intercambian las celdas en el
  * Google Sheet del mes (texto, colores y formato) y se vuelve a sincronizar.
  *
+ * Rol abierto (Tipo = Abierto): el solicitante publica sus días sin elegir compañero; cualquier instructor del
+ * rol del mes lo ve y puede tomarlo. Quien lo toma queda como receptor y el intercambio pasa directo a revisión
+ * de coordinación (tomarlo equivale a aceptarlo). Desde ahí sigue el mismo flujo de aprobación.
+ *
  * Hoja Intercambios: una fila por solicitud. Los meses ocultos a instructores no admiten intercambios.
  */
 
 const ENC_INT_ = ['ID', 'Mes', 'Días', 'Solicitante BP', 'Solicitante', 'Receptor BP', 'Receptor', 'Actividades solicitante', 'Actividades receptor',
   'Estado', 'Comentario solicitante', 'Comentario receptor', 'Comentario supervisor', 'Creado', 'Respondido receptor', 'Decidido', 'Supervisor',
-  'Aplicación', 'Visto solicitante', 'Visto receptor', 'Revisado coordinación', 'Revisor', 'Comentario revisor', 'Hilo correo'];
+  'Aplicación', 'Visto solicitante', 'Visto receptor', 'Revisado coordinación', 'Revisor', 'Comentario revisor', 'Hilo correo', 'Tipo'];
 const EST_INT_ = {
-  pendiente: 'Pendiente', en_supervisor: 'En revisión de coordinación', en_jefe: 'En aprobación final',
+  abierto: 'Publicado (rol abierto)', pendiente: 'Pendiente', en_supervisor: 'En revisión de coordinación', en_jefe: 'En aprobación final',
   rechazado_receptor: 'Rechazado por receptor', rechazado_jefe: 'Rechazado en aprobación final',
   aprobado: 'Aprobado', rechazado_supervisor: 'Rechazado por supervisor', cancelado: 'Cancelado'
 };
@@ -43,6 +47,7 @@ function hojaInt_() { return asegurarColumnas_(hoja_(CONFIG.hojas.intercambios, 
 
 function estadoIntDeTexto_(t) {
   const n = normTxt_(t);
+  if (/^publicado/.test(n)) return 'abierto';
   if (/^en espera|^en revision/.test(n)) return 'en_supervisor';
   if (/^en aprobacion final/.test(n)) return 'en_jefe';
   if (/^rechazado en aprobacion final/.test(n)) return 'rechazado_jefe';
@@ -66,9 +71,9 @@ function leerIntercambios_() {
     const dias = String(g(r, 'Días') || '').split(/[\s,;]+/).map(Number).filter(n => n >= 1 && n <= 31);
     let estado = estadoIntDeTexto_(g(r, 'Estado'));
     const primero = mes && dias.length ? mes + '-' + ('0' + Math.min.apply(null, dias)).slice(-2) : '';
-    const vencido = (estado === 'pendiente' || estado === 'en_supervisor' || estado === 'en_jefe') && primero && primero <= hoy;
+    const vencido = (estado === 'abierto' || estado === 'pendiente' || estado === 'en_supervisor' || estado === 'en_jefe') && primero && primero <= hoy;
     return {
-      fila: i + 2, id: String(g(r, 'ID') || ''), mes: mes, dias: dias,
+      fila: i + 2, id: String(g(r, 'ID') || ''), mes: mes, dias: dias, tipo: normTxt_(g(r, 'Tipo')) === 'abierto' ? 'abierto' : 'directo',
       solBp: bpTxt_(g(r, 'Solicitante BP')), solNombre: String(g(r, 'Solicitante') || ''),
       recBp: bpTxt_(g(r, 'Receptor BP')), recNombre: String(g(r, 'Receptor') || ''),
       actSol: jsonArr_(g(r, 'Actividades solicitante')), actRec: jsonArr_(g(r, 'Actividades receptor')),
@@ -83,9 +88,11 @@ function leerIntercambios_() {
   }).filter(x => x.id && x.mes);
 }
 
-/** Lo que ve cada uno: coordinación ve todo; un instructor, solo donde participa. */
+/** Lo que ve cada uno: coordinación ve todo; un instructor, donde participa y los roles abiertos disponibles. */
 function intercambiosPara_(u) {
-  return leerIntercambios_().filter(x => u.rol === 'admin' || x.solBp === u.bp || x.recBp === u.bp)
+  const ocultos = mesesOcultos_();
+  return leerIntercambios_().filter(x => u.rol === 'admin' || x.solBp === u.bp || x.recBp === u.bp ||
+    (u.rol === 'inst' && x.estado === 'abierto' && ocultos.indexOf(x.mes) < 0))
     .map(x => { delete x.fila; return x; });
 }
 
@@ -100,7 +107,10 @@ function exigirDiaFuturo_(mes, dia) {
   const f = mes + '-' + ('0' + dia).slice(-2);
   if (f <= hoyISO_()) throw falla_('Solo se pueden intercambiar días a partir de mañana.');
 }
-const activoInt_ = x => x.estado === 'pendiente' || x.estado === 'en_supervisor' || x.estado === 'en_jefe';
+const activoInt_ = x => x.estado === 'abierto' || x.estado === 'pendiente' || x.estado === 'en_supervisor' || x.estado === 'en_jefe';
+/** Rol abierto publicado por bp que incluye alguno de esos días (todavía sin tomar). */
+const abiertoQueCruza_ = (todos, bp, mes, dias, excluirId) => todos.find(x => x.id !== excluirId && x.mes === mes && x.estado === 'abierto' &&
+  x.solBp === bp && x.dias.some(d => dias.indexOf(d) >= 0));
 /* Ya aceptado por ambos instructores (compromete esos días hasta que se decida) */
 const comprometidoInt_ = x => x.estado === 'en_supervisor' || x.estado === 'en_jefe';
 
@@ -155,6 +165,8 @@ function apiCrearIntercambio(token, mes, dias, receptorBp, comentario, disp) {
       // Una sola propuesta enviada en curso por día
       if (todos.some(x => cruza(x) && x.estado === 'pendiente' && x.solBp === u.bp))
         throw falla_('Ya enviaste otra propuesta que incluye esos días. Cancélala antes de proponer una nueva.');
+      if (abiertoQueCruza_(todos, u.bp, mes, lista))
+        throw falla_('Tienes esos días publicados como rol abierto. Retira la publicación antes de proponer un intercambio directo.');
       // Lo que bloquea es un intercambio ya aceptado por ambos (en espera de coordinación)
       const comprometido = todos.find(x => cruza(x) && comprometidoInt_(x) && [x.solBp, x.recBp].some(p => p === u.bp || p === receptorBp));
       if (comprometido) throw falla_((comprometido.solBp === u.bp || comprometido.recBp === u.bp ? 'Ya tienes' : b.nombre + ' ya tiene') + ' un intercambio aceptado esos días, esperando a coordinación.');
@@ -191,6 +203,8 @@ function apiResponderIntercambio(token, id, acepta, comentario, disp) {
         const otro = leerIntercambios_().find(z => z.id !== x.id && z.mes === x.mes && comprometidoInt_(z) && z.dias.some(d => x.dias.indexOf(d) >= 0) &&
           [z.solBp, z.recBp].some(p => p === x.solBp || p === x.recBp));
         if (otro) throw falla_((otro.solBp === u.bp || otro.recBp === u.bp ? 'Ya tienes' : x.solNombre + ' ya tiene') + ' otro intercambio aceptado esos días, esperando a coordinación. Rechaza este o espera esa decisión.');
+        if (abiertoQueCruza_(leerIntercambios_(), u.bp, x.mes, x.dias))
+          throw falla_('Tienes esos días publicados como rol abierto. Retira la publicación antes de aceptar este intercambio.');
       }
       const est = acepta ? 'en_supervisor' : 'rechazado_receptor';
       escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_[est], 'Comentario receptor': com, 'Respondido receptor': new Date(), 'Visto receptor': est });
@@ -212,8 +226,9 @@ function apiCancelarIntercambio(token, id, disp) {
       if (!x || x.solBp !== u.bp) throw falla_('No encontramos ese intercambio.');
       if (!activoInt_(x)) throw yaResuelto_('Este intercambio', (EST_INT_[x.estado] || x.estado).toLowerCase(), x.supervisor, x.decidido || x.respondido);
       escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_.cancelado, 'Decidido': new Date(), 'Visto solicitante': 'cancelado' });
-      registrar_(u, 'Intercambio cancelado', 'Con ' + x.recNombre + ' · ' + rangoDiasTxt_(x.mes, x.dias), disp);
-      notificarInt_(x.id, x.solNombre + ' canceló la propuesta de intercambio.', [], '');
+      const abierto = x.estado === 'abierto';
+      registrar_(u, abierto ? 'Rol abierto retirado' : 'Intercambio cancelado', (abierto ? 'Rol abierto' : 'Con ' + x.recNombre) + ' · ' + rangoDiasTxt_(x.mes, x.dias), disp);
+      if (!abierto) notificarInt_(x.id, x.solNombre + ' canceló la propuesta de intercambio.', [], '');
       return { intercambios: intercambiosPara_(u) };
     });
   });
@@ -232,6 +247,145 @@ function apiVistoIntercambios(token, ids) {
       return true;
     });
   });
+}
+
+/* ---------------- Rol abierto ---------------- */
+
+/** Días válidos para intercambiar: entre 1 y MAX_DIAS_INT_, seguidos, dentro del mes y desde mañana. */
+function diasIntValidos_(mes, dias) {
+  const lista = Array.from(new Set((dias || []).map(Number))).sort((a, b) => a - b);
+  const nd = diasDelMes_(mes);
+  if (!lista.length || lista.length > MAX_DIAS_INT_) throw falla_('Elige entre 1 y ' + MAX_DIAS_INT_ + ' días.');
+  if (lista.some(d => !(d >= 1 && d <= nd))) throw falla_('Día inválido.');
+  if (lista[lista.length - 1] - lista[0] !== lista.length - 1) throw falla_('Los días deben ser seguidos.');
+  exigirDiaFuturo_(mes, lista[0]);
+  return lista;
+}
+
+/** El instructor publica su actividad de uno o más días seguidos para que cualquier compañero del rol la tome. */
+function apiPublicarAbierto(token, mes, dias, comentario, disp) {
+  return responder_(() => {
+    const u = sesion_(token).u;
+    mes = mesTxt_(mes);
+    if (u.rol !== 'inst') throw falla_('Solo los instructores pueden publicar un rol abierto.');
+    if (!mes) throw falla_('Mes inválido.');
+    if (!mesVisible_(mes)) throw falla_('Ese mes todavía no está publicado para instructores.');
+    const com = comentarioVac_(comentario);
+    const lista = diasIntValidos_(mes, dias);
+    return conBloqueo_(() => {
+      const m = rolDelMes_(mes);
+      const a = m.instructores.find(i => i.bp === u.bp);
+      if (!a) throw falla_('No figuras en el rol de ese mes.');
+      const actA = lista.map(d => a.dias[d - 1] || '');
+      if (actA.every(t => !normCelda_(t))) throw falla_('Esos días no tienen actividad asignada: no hay nada que ofrecer.');
+      const todos = leerIntercambios_();
+      const cruza = x => x.mes === mes && x.dias.some(d => lista.indexOf(d) >= 0);
+      if (abiertoQueCruza_(todos, u.bp, mes, lista)) throw falla_('Ya publicaste un rol abierto que incluye esos días.');
+      if (todos.some(x => cruza(x) && x.estado === 'pendiente' && x.solBp === u.bp))
+        throw falla_('Ya enviaste una propuesta de intercambio que incluye esos días. Cancélala antes de publicarlos como rol abierto.');
+      if (todos.some(x => cruza(x) && comprometidoInt_(x) && (x.solBp === u.bp || x.recBp === u.bp)))
+        throw falla_('Ya tienes un intercambio aceptado esos días, esperando a coordinación.');
+      const sh = hojaInt_();
+      const id = 'i' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+      const n = sh.getLastRow() + 1;
+      sh.getRange(n, 1, 1, 7).setNumberFormat('@');
+      escribirFila_(sh, n, {
+        'ID': id, 'Mes': mes, 'Días': lista.join(', '), 'Solicitante BP': u.bp, 'Solicitante': nombreDe_(u),
+        'Actividades solicitante': JSON.stringify(actA), 'Actividades receptor': '[]', 'Estado': EST_INT_.abierto,
+        'Comentario solicitante': com, 'Creado': new Date(), 'Visto solicitante': 'abierto', 'Tipo': 'Abierto'
+      });
+      registrar_(u, 'Rol abierto publicado', rangoDiasTxt_(mes, lista), disp);
+      avisarAbierto_(u, m, lista, actA, com);
+      return { intercambios: intercambiosPara_(u) };
+    });
+  });
+}
+
+/** Un compañero toma un rol abierto: queda como receptor y el intercambio pasa directo a revisión de coordinación. */
+function apiTomarAbierto(token, id, comentario, disp) {
+  return responder_(() => {
+    const u = sesion_(token).u;
+    if (u.rol !== 'inst') throw falla_('Solo los instructores pueden tomar un rol abierto.');
+    const com = comentarioVac_(comentario);
+    return conBloqueo_(() => {
+      const todos = leerIntercambios_();
+      const x = todos.find(i => i.id === String(id));
+      if (!x || x.tipo !== 'abierto') throw falla_('No encontramos ese rol abierto.');
+      if (x.solBp === u.bp) throw falla_('No puedes tomar tu propio rol abierto.');
+      if (x.estado === 'vencido') throw falla_('Este rol abierto venció: la fecha ya pasó.');
+      if (x.estado !== 'abierto') {
+        const retirado = x.estado === 'cancelado';
+        throw yaResuelto_('Este rol abierto', retirado ? 'retirado' : 'tomado', retirado ? (x.aplicacion ? '' : x.solNombre) : x.recNombre, retirado ? x.decidido : x.respondido);
+      }
+      if (!mesVisible_(x.mes)) throw falla_('Ese mes ya no está publicado para instructores.');
+      exigirDiaFuturo_(x.mes, x.dias[0]);
+      const m = rolDelMes_(x.mes);
+      const a = m.instructores.find(i => i.bp === x.solBp), b = m.instructores.find(i => i.bp === u.bp);
+      if (!b) throw falla_('No figuras en el rol de ese mes.');
+      // El rol de quien publicó cambió desde entonces (edición en el Google Sheet u otro intercambio aprobado)
+      if (!a || x.dias.some((d, k) => normCelda_(a.dias[d - 1]) !== normCelda_(x.actSol[k]))) {
+        escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_.cancelado, 'Decidido': new Date(),
+          'Aplicación': 'Cerrado automáticamente: el rol de ' + x.solNombre + ' cambió desde que se publicó · ' + hoyISO_() });
+        throw falla_('El rol de ' + x.solNombre + ' en esos días cambió desde que lo publicó, así que la oferta se cerró. Ya actualizamos tu pantalla.', 'YA_RESUELTO');
+      }
+      const actB = x.dias.map(d => b.dias[d - 1] || '');
+      if (actB.every((t, k) => normCelda_(t) === normCelda_(x.actSol[k]))) throw falla_('Tienes la misma actividad que ' + x.solNombre + ' esos días: no hay nada que intercambiar.');
+      if (abiertoQueCruza_(todos, u.bp, x.mes, x.dias)) throw falla_('Tú también publicaste esos días como rol abierto. Retira tu publicación antes de tomar esta.');
+      const comp = todos.find(z => z.id !== x.id && z.mes === x.mes && comprometidoInt_(z) && z.dias.some(d => x.dias.indexOf(d) >= 0) &&
+        [z.solBp, z.recBp].some(p => p === u.bp || p === x.solBp));
+      if (comp) throw falla_((comp.solBp === u.bp || comp.recBp === u.bp ? 'Ya tienes' : x.solNombre + ' ya tiene') + ' un intercambio aceptado esos días, esperando a coordinación.');
+      escribirFila_(hojaInt_(), x.fila, {
+        'Receptor BP': u.bp, 'Receptor': nombreDe_(u), 'Actividades receptor': JSON.stringify(actB),
+        'Estado': EST_INT_.en_supervisor, 'Comentario receptor': com, 'Respondido receptor': new Date(), 'Visto receptor': 'en_supervisor'
+      });
+      registrar_(u, 'Rol abierto tomado', 'De ' + x.solNombre + ' · ' + rangoDiasTxt_(x.mes, x.dias), disp);
+      notificarInt_(x.id, nombreDe_(u) + ' tomó el rol abierto de ' + x.solNombre + '. Pasa a revisión de coordinación.', aprobadoresInt_().revision,
+        'Coordinación: revísalo en la pestaña "Intercambios de rol" de la app.');
+      return { intercambios: intercambiosPara_(u) };
+    });
+  });
+}
+
+/** Al aprobarse un intercambio, los roles abiertos de esos instructores en esos días quedan desactualizados: se cierran. */
+function cerrarAbiertosDe_(x) {
+  try {
+    const sh = hojaInt_();
+    leerIntercambios_().filter(z => z.id !== x.id && z.mes === x.mes && z.estado === 'abierto' && (z.solBp === x.solBp || z.solBp === x.recBp) &&
+      z.dias.some(d => x.dias.indexOf(d) >= 0))
+      .forEach(z => escribirFila_(sh, z.fila, { 'Estado': EST_INT_.cancelado, 'Decidido': new Date(),
+        'Aplicación': 'Cerrado automáticamente: ese rol cambió por otro intercambio aprobado · ' + hoyISO_() }));
+  } catch (e) { console.warn('No se pudieron cerrar los roles abiertos de ' + x.id + ': ' + e.message); }
+}
+
+/**
+ * Aviso de un rol abierto a los compañeros del rol del mes, en copia oculta (con copia al que publica).
+ * Se apaga con CONFIG.intAbiertoCorreo = false. Un error de correo nunca detiene la publicación.
+ */
+function avisarAbierto_(u, m, dias, actA, com) {
+  if (CONFIG.intAbiertoCorreo === false) return;
+  try {
+    const enRol = {}; m.instructores.forEach(i => { enRol[i.bp] = true; });
+    const otros = usuarios_().filter(v => v.rol === 'inst' && v.activo && v.correo && enRol[v.bp] && v.bp !== u.bp).map(v => v.correo);
+    if (!otros.length) return;
+    const asunto = CONFIG.nombreApp + ' · Rol abierto: ' + nombreDe_(u) + ' ofrece ' + rangoDiasTxt_(m.mes, dias);
+    const td = 'padding:4px 8px;border:1px solid #ddd;vertical-align:top';
+    const html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#0F004F">' +
+      '<p style="font-size:15px"><b>' + escHtml_(nombreDe_(u)) + ' publicó su rol ' + escHtml_(rangoDiasTxt_(m.mes, dias)) + ' para intercambiar.</b></p>' +
+      '<table style="border-collapse:collapse;font-size:13px"><tr><th style="' + td + '">Día</th><th style="' + td + '">Actividad que ofrece</th></tr>' +
+      dias.map((d, k) => '<tr><td style="' + td + '">' + d + '</td><td style="' + td + '">' + escHtml_(actA[k] || 'Sin asignar').replace(/\n/g, '<br>') + '</td></tr>').join('') + '</table>' +
+      (com ? '<p><b>Comentario:</b> ' + escHtml_(com) + '</p>' : '') +
+      '<p>Si te interesa, entra a la app y tómalo desde "Mi rol" › Roles abiertos. Lo toma el primero que lo pida; después lo revisa coordinación.</p>' +
+      botonAppHtml_() + '</div>';
+    const texto = nombreDe_(u) + ' publicó su rol ' + rangoDiasTxt_(m.mes, dias) + ' para intercambiar.\n' +
+      dias.map((d, k) => d + ': ' + (actA[k] || 'Sin asignar').replace(/\n/g, ' · ')).join('\n') + (com ? '\nComentario: ' + com : '') +
+      '\n\nSi te interesa, tómalo desde "Mi rol" › Roles abiertos.' + (urlApp_() ? '\n' + urlApp_() : '');
+    if (enPrueba_()) { // en prueba, solo a quien prueba (sin copia oculta)
+      const c = correoPrueba_(otros.concat(u.correo ? [u.correo] : []), asunto, html, texto);
+      if (c.dest.length) MailApp.sendEmail({ to: c.dest.join(','), subject: c.asunto, htmlBody: c.html, body: c.texto, name: CONFIG.nombreApp });
+      return;
+    }
+    MailApp.sendEmail({ to: u.correo || Session.getEffectiveUser().getEmail(), bcc: otros.join(','), subject: asunto, htmlBody: html, body: texto, name: CONFIG.nombreApp });
+  } catch (e) { console.warn('Aviso de rol abierto no enviado: ' + e.message); }
 }
 
 /* ---------------- Funciones públicas: coordinación ---------------- */
@@ -275,6 +429,7 @@ function apiDecidirIntercambio(token, id, aprueba, comentario, pasoEsperado) {
       const valores = { 'Estado': EST_INT_[est], 'Decidido': new Date(), 'Supervisor': nombreDe_(yo), 'Comentario supervisor': com, 'Aplicación': aplicacion };
       if (paso === 'revision') { valores['Revisado coordinación'] = new Date(); valores['Revisor'] = nombreDe_(yo); valores['Comentario revisor'] = com; }
       escribirFila_(sh, x.fila, valores);
+      if (aprueba) cerrarAbiertosDe_(x);
       const quien = paso === 'revision' ? 'coordinación' : 'aprobación final';
       registrar_(yo, 'Intercambio ' + (aprueba ? 'aprobado' : 'rechazado') + ' en ' + quien, x.solNombre + ' ↔ ' + x.recNombre + ' · ' + rango, '');
       // Si coordinación rechaza, la aprobación final se suma al hilo solo para quedar informada
@@ -465,8 +620,9 @@ function enviarGmailHilo_(dest, asunto, html, texto, h) {
 /** Línea de tiempo del intercambio para el correo. */
 function historialIntHtml_(x) {
   const f = d => { try { return d ? Utilities.formatDate(new Date(d), CONFIG.zona, "dd/MM HH:mm") : ''; } catch (e) { return ''; } };
-  const filas = [[x.creado, x.solNombre, 'Propuso el intercambio', x.comSol]];
-  if (x.respondido) filas.push([x.respondido, x.recNombre, x.estadoGuardado === 'rechazado_receptor' ? 'Rechazó' : 'Aceptó', x.comRec]);
+  const ab = x.tipo === 'abierto';
+  const filas = [[x.creado, x.solNombre, ab ? 'Lo publicó como rol abierto' : 'Propuso el intercambio', x.comSol]];
+  if (x.respondido) filas.push([x.respondido, x.recNombre, ab ? 'Tomó el rol abierto' : x.estadoGuardado === 'rechazado_receptor' ? 'Rechazó' : 'Aceptó', x.comRec]);
   if (x.revisado) filas.push([x.revisado, x.revisor, x.estadoGuardado === 'rechazado_supervisor' ? 'Rechazó en coordinación' : 'Aprobó en coordinación', x.comRev]);
   // Paso final separado (no cuando coordinación aprobó directo, sin aprobación final configurada)
   const directo = x.revisor && x.supervisor === x.revisor && f(x.revisado) === f(x.decidido);

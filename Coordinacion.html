@@ -27,6 +27,9 @@ function calcIndicadores(){
     cargaMin:minArr(C.map(r=>r.s.carga)), cargaMax:maxArr(C.map(r=>r.s.carga)),
     vinProm: media(V.map(r=>r.s.vin)), vjProm: media(V.map(r=>r.s.viajes))};
 }
+/* Vigencias (hoja Vigencias): oculto por ahora porque los datos son del archivo original y nadie los actualiza.
+   La lectura y la alerta se mantienen; para volver a mostrarla, cambiar a true (pendiente: definir fuente y responsable). */
+const MOSTRAR_VIGENCIAS = false;
 const periodoTxt = () => S.modo==="mes" ? mesLargo(S.mes) : (mesInfo(S.mes).m===1 ? mesLargo(S.mes) : `Enero a ${mesInfo(S.mes).nombre} ${mesInfo(S.mes).y}`);
 function alertas(I){
   const out=[]; const nm=I.meses.length, per=I.meses;
@@ -64,14 +67,10 @@ function alertas(I){
   if(solVacPend.length) out.push({sev:"media", ev:"Dato", titulo:`${plural(solVacPend.length,"solicitud","solicitudes")} de vacaciones por revisar`, texto:`${[...new Set(solVacPend.map(s=>(MO.personas[s.bp]||{}).nombre||s.nombre))].join(", ")}. Apruébalas o recházalas en la pestaña Vacaciones.`, tags:["Vacaciones"], fn:()=>{ if(!puede("vac")) return; S.tab="vac"; render(); scrollTo(0,0); }});
   const sinM=gruposPeriodo([S.mes]).todos.filter(r=>r.s.sin>0);
   if(sinM.length) out.push({sev:"media", ev:"Dato", titulo:`Días sin asignar en ${mesInfo(S.mes).nombre}`, texto:`${sinM.reduce((a,r)=>a+r.s.sin,0)} días vacíos en el rol: ${sinM.map(r=>r.pe.nombre).join(", ")}.`, tags:["Calidad del dato"], fn:()=>abrirDrill("Días sin asignar",mesLargo(S.mes),regsDe(sinM.map(r=>r.pe.bp),[S.mes],x=>x.x.k==="SIN"))});
-  Object.values(MO.personas).forEach(pe=>{ if(pe.bg&&pe.bg.expProgramada==="VENCIDO" && pe.meses[S.mes]) out.push({sev:"alta", ev:"Dato", titulo:`Experiencia reciente vencida: ${pe.nombre}`, texto:`Según la hoja Vigencias, su última experiencia reciente fue el ${pe.bg.ultimaExp?fmtISO(pe.bg.ultimaExp):"—"}.`, tags:["Vigencias"], fn:()=>verInstructor(pe.bp)}); });
+  if(MOSTRAR_VIGENCIAS) Object.values(MO.personas).forEach(pe=>{ if(pe.bg&&pe.bg.expProgramada==="VENCIDO" && pe.meses[S.mes]) out.push({sev:"alta", ev:"Dato", titulo:`Experiencia reciente vencida: ${pe.nombre}`, texto:`Según la hoja Vigencias, su última experiencia reciente fue el ${pe.bg.ultimaExp?fmtISO(pe.bg.ultimaExp):"—"}.`, tags:["Vigencias"], fn:()=>verInstructor(pe.bp)}); });
   if(I.G.fuera.length) out.push({sev:"info", ev:"Dato", titulo:`${I.G.fuera.length} persona${I.G.fuera.length>1?"s":""} fuera de la comparación`, texto:`${I.G.fuera.map(r=>r.pe.nombre).join(", ")}: disponibilidad baja en el periodo (licencia, descanso médico o ingreso parcial). No se incluyen en los indicadores de equidad.`, tags:["Disponibilidad"],
     fn:()=>abrirDrill("Ausencias en el periodo",periodoTxt(),regsDe(I.G.fuera.map(r=>r.pe.bp),per,x=>["VAC","DM","LIC"].includes(x.x.k)))});
   const ordS={alta:0,media:1,info:2}; return out.sort((a,b)=>ordS[a.sev]-ordS[b.sev]);
-}
-function abrirSolicitudes(list, titulo, sub){
-  const html=list.length?`<div class="dgroup">${list.map(x=>`<div class="drow"><span class="dt">${x.desde.slice(8)}/${x.desde.slice(5,7)}</span><span><b>${esc(x.nombre)}</b><div class="mt">${esc(x.tipo)}${x.hasta&&x.hasta!==x.desde?` · hasta ${fmtISO(x.hasta)}`:""}</div></span><span class="pill ${x.estado==="asignado"?"good":x.estado==="no se asignó"?"crit":""}">${x.estado==="asignado"?"Asignada":x.estado==="no se asignó"?"No asignada":"Sin respuesta"}</span></div>`).join("")}</div>`:`<p class="empty">Sin solicitudes.</p>`;
-  abrirPanel(titulo, `${sub||periodoTxt()} · ${list.length} solicitud${list.length===1?"":"es"}`, html);
 }
 const irA = id => ()=>{ const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:"smooth",block:"center"}); };
 
@@ -191,7 +190,7 @@ function admIndicadores(){
     ${conc}
     ${comp}
     ${vacHTML}
-    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas Vigencias, Usuarios y Vacaciones (periodo DGAC de cada instructor). Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
+    <p class="foot">Fuente: ${mesesY.length} mes${mesesY.length===1?"":"es"} cargado${mesesY.length===1?"":"s"} de ${mi.y} (${mesCorto(primero)}–${mesCorto(ultimo)}), hojas ${MOSTRAR_VIGENCIAS?"Vigencias, ":""}Usuarios y Vacaciones (periodo DGAC de cada instructor). Disponibles = días del periodo menos vacaciones, descanso médico y licencias.</p>
   </div>`;
 }
 
