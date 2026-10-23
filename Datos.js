@@ -77,7 +77,7 @@ function apiDatos(token) {
       vac: datosVac_(equipo, u.bp),
       do: datosDO_(equipo, u),
       intercambios: intercambiosPara_(u),
-      intAprob: u.rol === 'admin' ? infoAprobadoresInt_(u) : null,
+      intAprob: u.rol === 'admin' || nivel_(u, 'int') >= 1 ? infoAprobadoresInt_(u) : null,
       intConFinal: aprobadoresInt_().final.length > 0, // para dibujar los pasos del intercambio
       baseUrl: u.rol === 'admin' ? ss_().getUrl() : ''
     };

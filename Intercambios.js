@@ -91,7 +91,8 @@ function leerIntercambios_() {
 /** Lo que ve cada uno: coordinación ve todo; un instructor, donde participa y los roles abiertos disponibles. */
 function intercambiosPara_(u) {
   const ocultos = mesesOcultos_();
-  return leerIntercambios_().filter(x => u.rol === 'admin' || x.solBp === u.bp || x.recBp === u.bp ||
+  const todos = u.rol === 'admin' || nivel_(u, 'int') >= 1; // coordinación o instructor focal con acceso a Intercambios
+  return leerIntercambios_().filter(x => todos || x.solBp === u.bp || x.recBp === u.bp ||
     (u.rol === 'inst' && x.estado === 'abierto' && ocultos.indexOf(x.mes) < 0))
     .map(x => { delete x.fila; return x; });
 }

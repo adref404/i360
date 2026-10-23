@@ -110,7 +110,8 @@ const CONFIG = {
   ]
 };
 
-const VERSION_APP = '2.4';
+// Versión de la app: es lo único que hay que cambiar (se muestra en el inicio de sesión, la pantalla de carga y el diagnóstico).
+const VERSION_APP = '2.5';
 const ARCHIVOS_HTML_ = ['Estilos', 'FuentesLatam', 'Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'BloqueDOVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'];
 
 function doGet(e) {
@@ -149,7 +150,7 @@ function logoHtml_(tipo, modo) {
 function diagnostico_() {
   const L = [CONFIG.nombreApp + ' · diagnóstico · versión ' + VERSION_APP + (enPrueba_() ? ' · AMBIENTE DE PRUEBA' : ''), 'Fecha del servidor: ' + new Date().toISOString(), ''];
   const paso = (nombre, fn) => { try { L.push('OK    ' + nombre + (function (r) { return r ? ' — ' + r : ''; })(fn())); } catch (err) { L.push('ERROR ' + nombre + ' — ' + (err && err.message)); } };
-  paso('Archivo HTML "Index"', () => { const c = HtmlService.createHtmlOutputFromFile('Index').getContent(); if (c.indexOf("include('VacacionesVista')") < 0 || c.indexOf('Index v' + VERSION_APP) < 0) throw new Error('es una versión anterior; vuelve a copiarlo desde el zip v' + VERSION_APP); return Math.round(c.length / 1024) + ' KB'; });
+  paso('Archivo HTML "Index"', () => { const c = HtmlService.createHtmlOutputFromFile('Index').getContent(); const falta = ARCHIVOS_HTML_.filter(n => n !== 'Estilos' && n !== 'FuentesLatam' && c.indexOf("include('" + n + "')") < 0); if (falta.length) throw new Error('no incluye: ' + falta.join(', ')); return Math.round(c.length / 1024) + ' KB'; });
   ARCHIVOS_HTML_.forEach(n => paso('Archivo HTML "' + n + '"', () => revisarArchivoHtml_(n)));
   paso('Google Sheet base', () => ss_().getName());
   Object.keys(CONFIG.hojas).forEach(k => paso('Hoja ' + CONFIG.hojas[k], () => {
@@ -195,8 +196,7 @@ function revisarArchivoHtml_(n) {
   if (t.indexOf('<script>') !== 0) throw new Error(kb + ', no empieza con <script>');
   if (t.indexOf('window.__archivos["' + n + '"]=') < 0 || !/<\/script>$/.test(t)) throw new Error(kb + ', INCOMPLETO: falta el final del archivo; vuelve a pegarlo completo');
   const js = t.replace(/^<script>/, '').replace(/<\/script>$/, '');
-  try { new Function(js); } catch (err) { throw new Error(kb + ', ERROR DE SINTAXIS: ' + err.message + '. El texto quedó alterado al copiarlo: borra todo el contenido del archivo y pégalo de nuevo desde el zip v' + VERSION_APP + '.'); }
-  if (c.indexOf('window.__archivos["' + n + '"]="v' + VERSION_APP + '"') < 0) throw new Error(kb + ', es de otra versión (se esperaba la ' + VERSION_APP + '); vuelve a copiarlo');
+  try { new Function(js); } catch (err) { throw new Error(kb + ', ERROR DE SINTAXIS: ' + err.message + '. Revisa el último cambio de ese archivo.'); }
   return kb + ', completo y sin errores de sintaxis';
 }
 

@@ -228,5 +228,5 @@ function admInst(){
   return `<div class="stack"><div class="field" style="max-width:380px"><label for="selVer">¿De quién es la información?</label><select class="input" id="selVer">${P.map(pe=>`<option value="${esc(pe.bp)}" ${pe.bp===S.verBp?"selected":""}>${esc(pe.nombre)}${!pe.meses[S.mes]?" (sin rol en "+mesInfo(S.mes).nombre+")":pe.perfil==="nd"?" (ausencia prolongada)":""}</option>`).join("")}</select></div>${vistaUsuario(S.verBp,true)}</div>`;
 }
 
-window.__archivos=(window.__archivos||{}); window.__archivos["Coordinacion"]="v2.4";
+window.__archivos=(window.__archivos||{}); window.__archivos["Coordinacion"]=true;
 </script>

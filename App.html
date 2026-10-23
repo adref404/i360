@@ -66,7 +66,7 @@ const respDe = (bp,mes=S.mes) => S.resp[mes+"_"+bp] || null;
 const puede = v => S.vistas.includes(v);
 const esAdmin = () => S.usuario && S.usuario.rol==="admin";
 /* Nivel del perfil de acceso en una sección: 0 sin acceso · 1 ver · 2 gestionar (el servidor también lo valida) */
-const nivelSec = k => !esAdmin() ? 0 : (S.usuario.niveles ? (S.usuario.niveles[k]||0) : 2);
+const nivelSec = k => S.usuario && S.usuario.niveles ? (S.usuario.niveles[k]||0) : (esAdmin() ? 2 : 0);   // instructor focal: máximo 1
 const gestiona = k => nivelSec(k) >= 2;
 const SECC_CON_ACCIONES = ["vac","int","cargar","colores","usuarios"];
 
@@ -395,7 +395,7 @@ function vistaShell(){
   const titulo = S.tab==="ind"?"Indicadores del Freeze" : conMes? `Rol de ${mesInfo(S.mes).nombre} ${mesInfo(S.mes).y}` : TAB_NOMBRE[S.tab];
   const encabezado = ["inst","mi"].includes(S.tab) ? "" :
     `<div class="pagehead"><div><span class="eyebrow">${esAdmin()?"Panel de coordinación · Instructores LP":"Instructores LP"}</span><h1>${esc(titulo)}</h1></div>${conMes&&!sinDatos?mesNav():""}</div>`;
-  const ro = esAdmin() && SECC_CON_ACCIONES.includes(S.tab) && !gestiona(S.tab);
+  const ro = nivelSec(S.tab)>=1 && SECC_CON_ACCIONES.includes(S.tab) && !gestiona(S.tab);
   const aviso = ro ? `<div class="ro-aviso" role="note">${svgUI('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>')}<span><b>Solo lectura.</b> Tu perfil (${esc(S.usuario.perfil||"")}) permite ver esta sección, pero no aprobar ni editar.</span></div>` : "";
   return `<div class="shell">${barraLateral(tabs)}<div class="shell-main${ro?" ro":""}">${encabezado}${aviso}${body}</div></div>`;
 }
@@ -586,5 +586,5 @@ document.addEventListener("click",e=>{
   document.addEventListener("scroll",()=>tip.hidden=true,true); })();
 function toast(t){ const d=document.createElement("div"); d.className="toast"; d.setAttribute("role","status"); d.textContent=t; document.body.appendChild(d); setTimeout(()=>d.remove(),3200); }
 
-window.__archivos=(window.__archivos||{}); window.__archivos["App"]="v2.4";
+window.__archivos=(window.__archivos||{}); window.__archivos["App"]=true;
 </script>

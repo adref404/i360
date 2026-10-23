@@ -153,9 +153,11 @@ function admUsuarios(){
         const yo=u.bp===S.adm.miBp, protegido=!u.administrable;
         const acciones = protegido ? `<span class="hint" title="${u.principal?"Solo él puede restablecer su acceso o cerrar sus sesiones":"Tiene más permisos que tu perfil"}">Protegido</span>`
           : `${ok?`<button class="btn sm" data-codigo="${esc(u.bp)}">${u.cuenta==="activa"?"Restablecer":"Generar código"}</button> <button class="btn sm" data-cerrar="${esc(u.bp)}" title="Cierra todas sus sesiones abiertas">Cerrar sesiones</button>`:S.adm.puedoGestionar?"":`<span class="hint">Actívalo en la hoja</span>`}${S.adm.puedoGestionar&&!u.principal&&!yo?` <button class="btn sm" data-activ="${esc(u.bp)}" data-on="${u.activo?0:1}">${u.activo?"Desactivar":"Activar"}</button>`:""}`;
-        const P=S.adm.perf, editable=P&&S.adm.puedoGestionar&&u.rol==="admin"&&!u.principal&&!yo&&u.administrable;
-        const perfilCel = u.rol!=="admin" ? "" : editable
-          ? `<select class="input perf-sel" data-perfil="${esc(u.bp)}" aria-label="Perfil de ${esc(u.nombre)}">${P.perfiles.map(p=>`<option value="${esc(p.nombre)}" ${p.nombre===u.perfil?"selected":""} ${perfilExcede(p)?"disabled":""}>${esc(p.nombre)}</option>`).join("")}</select>`
+        const P=S.adm.perf, editable=P&&S.adm.puedoGestionar&&(u.rol==="admin"||u.rol==="inst")&&!u.principal&&!yo&&u.administrable;
+        // Instructor: perfil opcional = instructor focal (ve esas secciones en solo lectura)
+        const opcInst = u.rol==="inst" ? `<option value="" ${u.perfil?"":"selected"}>Sin acceso a coordinación</option>` : "";
+        const perfilCel = !["admin","inst"].includes(u.rol) ? "" : editable
+          ? `<select class="input perf-sel" data-perfil="${esc(u.bp)}" aria-label="Perfil de ${esc(u.nombre)}" ${u.rol==="inst"?`title="Instructor focal: ve las secciones del perfil, solo lectura"`:""}>${opcInst}${P.perfiles.map(p=>`<option value="${esc(p.nombre)}" ${p.nombre===u.perfil?"selected":""} ${perfilExcede(p)?"disabled":""}>${esc(p.nombre)}${u.rol==="inst"?" (solo ver)":""}</option>`).join("")}</select>`
           : `<span class="sm2">${esc(u.perfil||"")}</span>`;
         return `<tr><td><div class="persona">${avatarHTML(u)}<div><b>${esc(u.nombre)}</b><span class="sm2 mono">BP ${esc(u.bp)}</span>${u.cargo||u.area?`<span class="sm2">${esc([u.cargo,u.area].filter(Boolean).join(" · "))}</span>`:""}${u.ide?`<span class="sm2">IDE ${esc(u.ide)}</span>`:""}${u.correo?`<span class="sm2">${esc(u.correo)}</span>`:`<span class="sm2">Sin correo</span>`}${S.adm.puedoGestionar&&(u.administrable||yo)?`<button class="btn link-btn" style="margin:2px 0 0 -4px;font-size:12px" data-uedit="${esc(u.bp)}">${u.correo?"Editar datos":"Agregar correo"}</button>`:""}</div></div></td>
           <td><span class="pill ${u.rol==="admin"?"acc":u.rol==="inst"?"info":""}">${u.principal?LOCK_SVG:""}${esc(u.rolTxt)}</span>${perfilCel}</td>
@@ -174,11 +176,12 @@ function perfilExcede(p){ const P=S.adm&&S.adm.perf; if(!P||P.soyPrincipal) retu
 function perfilesCardHTML(){
   const P=S.adm.perf; if(!P) return "";
   const usos=n=>S.adm.usuarios.filter(u=>u.rol==="admin"&&!u.principal&&u.perfil===n).length;
+  const focales=n=>S.adm.usuarios.filter(u=>u.rol==="inst"&&u.perfil===n).length;
   return `<div class="card stack" style="gap:12px">
-    <div class="row between"><div><h3>Perfiles de acceso</h3><p class="hint">Qué puede hacer cada administrador, sección por sección: <b>Sin acceso</b> (no la ve), <b>Ver</b> (solo consulta) o <b>Gestionar</b> (aprueba y edita). Los administradores principales siempre tienen todo. Nadie puede otorgar más acceso del que tiene.</p></div>
+    <div class="row between"><div><h3>Perfiles de acceso</h3><p class="hint">Qué puede hacer cada administrador, sección por sección: <b>Sin acceso</b> (no la ve), <b>Ver</b> (solo consulta) o <b>Gestionar</b> (aprueba y edita). Los administradores principales siempre tienen todo. Nadie puede otorgar más acceso del que tiene. A un instructor se le puede asignar un perfil (instructor focal): ve esas secciones solo en modo lectura y nunca Usuarios y accesos.</p></div>
       ${S.adm.puedoGestionar?`<button class="btn sm primary" data-perfnuevo="1">Nuevo perfil</button>`:""}</div>
     <div class="dt-wrap"><table class="dt perf-dt"><thead><tr><th>Perfil</th>${P.secciones.map(([k,n])=>`<th title="${esc(n)}">${esc(n)}</th>`).join("")}<th></th></tr></thead><tbody>
-      ${P.perfiles.map(p=>`<tr><td><b>${esc(p.nombre)}</b><span class="sm2">${esc(p.descripcion||"")}</span><span class="sm2">${plural(usos(p.nombre),"administrador","administradores")}</span></td>
+      ${P.perfiles.map(p=>`<tr><td><b>${esc(p.nombre)}</b><span class="sm2">${esc(p.descripcion||"")}</span><span class="sm2">${plural(usos(p.nombre),"administrador","administradores")}${focales(p.nombre)?` · ${plural(focales(p.nombre),"instructor focal","instructores focales")}`:""}</span></td>
         ${P.secciones.map(([k])=>`<td><span class="niv n${p.niveles[k]||0}" title="${NIV_TXT[p.niveles[k]||0]}">${NIV_TXT[p.niveles[k]||0]}</span></td>`).join("")}
         <td class="acts">${S.adm.puedoGestionar&&!perfilExcede(p)?`<button class="btn sm" data-perfedit="${esc(p.nombre)}">Editar</button>`:""}</td></tr>`).join("")}
     </tbody></table></div></div>`;
@@ -275,5 +278,5 @@ function abrirGenerarCodigo(bp){
     }catch(e){ setCargando(b,false); sc.querySelectorAll("[data-gen]").forEach(x=>x.disabled=false); $("#gcErr",sc).textContent=e.message; } });
 }
 
-window.__archivos=(window.__archivos||{}); window.__archivos["Admin"]="v2.4";
+window.__archivos=(window.__archivos||{}); window.__archivos["Admin"]=true;
 </script>

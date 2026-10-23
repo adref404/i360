@@ -162,14 +162,17 @@ function vistasDe_(rol) {
 function accesoEquipo_(rol, vistas) { return rol === 'admin' || vistas.some(v => VISTAS_EQUIPO_.indexOf(v) >= 0); }
 
 function perfilPublico_(u) {
-  // Coordinación: las secciones salen de su perfil de acceso; instructores: de la hoja Permisos
+  // Coordinación: las secciones salen de su perfil de acceso; instructores: de la hoja Permisos,
+  // más las de coordinación que su perfil permite ver si es instructor focal ("Mi rol" siempre primero)
   const niveles = nivelesDe_(u);
-  const vistas = u.rol === 'admin' ? VISTAS_ORDEN_.filter(k => (niveles[k] || 0) >= 1) : vistasDe_(u.rol);
+  let vistas = u.rol === 'admin' ? VISTAS_ORDEN_.filter(k => (niveles[k] || 0) >= 1) : vistasDe_(u.rol);
+  const focal = u.rol === 'inst' && VISTAS_ORDEN_.some(k => (niveles[k] || 0) >= 1);
+  if (focal) vistas = ['mi'].concat(VISTAS_ORDEN_.filter(k => k !== 'mi' && (vistas.indexOf(k) >= 0 || (niveles[k] || 0) >= 1)));
   return {
     bp: u.bp, nombre: nombreDe_(u), nombreCompleto: u.nombreCompleto, correo: u.correo,
-    rol: u.rol, rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : 'Instructor',
+    rol: u.rol, rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : focal ? 'Instructor focal' : 'Instructor',
     principal: !!u.principal, cargo: u.cargo || '', area: u.area || '', foto: u.foto || '',
-    perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : '', niveles: niveles,
+    perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : focal ? u.perfil : '', niveles: niveles,
     vistas: vistas, equipo: accesoEquipo_(u.rol, vistas)
   };
 }
@@ -274,7 +277,9 @@ function sesion_(token, opciones) {
   if (!puedeEntrar_(u)) { fin(); throw falla_('Tu acceso fue desactivado. Consulta con coordinación.', 'SESION'); }
   const c = cred_(u.bp) || { v: 0 };
   if ((c.v || 0) !== s.v) { fin(); throw falla_('Tu sesión se cerró porque cambió tu contraseña o coordinación cerró tus sesiones.', 'SESION'); }
-  if ((opciones.admin || opciones.seccion) && u.rol !== 'admin') throw falla_('Esta acción es solo para coordinación.', 'PERMISO');
+  if (opciones.admin && u.rol !== 'admin') throw falla_('Esta acción es solo para coordinación.', 'PERMISO');
+  // Un instructor solo pasa si es focal con acceso de lectura a esa sección (nunca llega a "Gestionar")
+  if (opciones.seccion && u.rol !== 'admin' && nivel_(u, opciones.seccion) < 1) throw falla_('Esta acción es solo para coordinación.', 'PERMISO');
   if (opciones.seccion) exigirNivel_(u, opciones.seccion, opciones.nivel || 1);
   cache_().put(id, raw, 600);
   return { u: u, s: s, id: id };
@@ -450,9 +455,9 @@ function apiUsuarios(token) {
         const r = reg[u.bp] || {};
         return {
           bp: u.bp, nombre: nombreDe_(u), nombreCorto: u.nombre, nombreCompleto: u.nombreCompleto, correo: u.correo,
-          rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : u.rol === 'inst' ? 'Instructor' : (u.rolTxt || 'Sin rol'),
+          rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : u.rol === 'inst' ? (u.perfil ? 'Instructor focal' : 'Instructor') : (u.rolTxt || 'Sin rol'),
           rol: u.rol, activo: u.activo, principal: !!u.principal, cargo: u.cargo, area: u.area, foto: u.foto, ide: u.ide,
-          perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : '',
+          perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : u.rol === 'inst' ? u.perfil : '',
           administrable: u.bp === yo.bp || (() => { try { exigirPuedeGestionar_(yo, u); return true; } catch (e) { return false; } })(),
           cuenta: c.h ? 'activa' : 'sin activar',
           claveDesde: c.t || null,

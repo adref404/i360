@@ -7,6 +7,10 @@
  *
  * Delegación: pueden crear, editar y asignar perfiles los principales y quien tenga "Gestionar" en Usuarios
  * y accesos, pero nunca por encima de sus propios niveles ni sobre un administrador principal.
+ *
+ * Instructor focal: un instructor con perfil asignado ve además esas secciones de coordinación, siempre en
+ * solo lectura ("Gestionar" cuenta como "Ver") y nunca Usuarios y accesos. Sigue siendo instructor para todo
+ * lo demás (su rol, intercambios, vacaciones, bloque de días libres). Sin perfil = instructor normal.
  * El servidor valida cada acción (sesion_ con { seccion, nivel }); la página solo oculta botones.
  */
 
@@ -57,6 +61,11 @@ const perfilPorNombre_ = nombre => leerPerfiles_().find(p => normTxt_(p.nombre) 
 /** Niveles efectivos de un usuario: {seccion: 0|1|2}. */
 function nivelesDe_(u) {
   const n = {};
+  if (u && u.rol === 'inst') {
+    const p = u.perfil ? perfilPorNombre_(u.perfil) : null;
+    SECCIONES_ADM_.forEach(([k]) => { n[k] = p && k !== 'usuarios' ? Math.min(1, p.niveles[k] || 0) : 0; });
+    return n;
+  }
   if (!u || u.rol !== 'admin') { SECCIONES_ADM_.forEach(([k]) => { n[k] = 0; }); return n; }
   if (u.principal) { SECCIONES_ADM_.forEach(([k]) => { n[k] = 2; }); return n; }
   // Perfil desconocido (borrado o mal escrito): solo lectura, por seguridad
@@ -142,7 +151,8 @@ function apiEliminarPerfil(token, nombre) {
       const p = perfilPorNombre_(nombre);
       if (!p || !p.fila) throw falla_(p ? 'El perfil por defecto no se puede eliminar.' : 'Ese perfil ya no existe.');
       exigirSinEscalar_(yo, p.niveles);
-      const usan = usuarios_().filter(u => u.rol === 'admin' && !u.principal && normTxt_(u.perfil || PERFIL_DEF_) === normTxt_(p.nombre));
+      const usan = usuarios_().filter(u => (u.rol === 'admin' && !u.principal && normTxt_(u.perfil || PERFIL_DEF_) === normTxt_(p.nombre)) ||
+        (u.rol === 'inst' && u.perfil && normTxt_(u.perfil) === normTxt_(p.nombre)));
       if (usan.length) throw falla_('Lo usan ' + usan.map(nombreDe_).join(', ') + '. Asígnales otro perfil antes de eliminarlo.');
       hoja_(CONFIG.hojas.perfiles).deleteRow(p.fila);
       _PERF = null;
@@ -159,16 +169,23 @@ function apiAsignarPerfil(token, bp, nombre) {
       _USU = null; _PERF = null;
       const u = usuarios_().find(x => x.bp === bpTxt_(bp));
       if (!u) throw falla_('No encontramos ese BP.');
-      if (u.rol !== 'admin') throw falla_('Los perfiles son solo para administradores.');
+      if (u.rol !== 'admin' && u.rol !== 'inst') throw falla_('Esa persona no tiene rol en la hoja Usuarios.');
       if (u.bp === yo.bp && !yo.principal) throw falla_('No puedes cambiar tu propio perfil. Pídeselo a otro administrador.');
       exigirPuedeAdministrar_(yo, u);
+      asegurarColumnas_(hoja_(CONFIG.hojas.usuarios), ['Perfil']);
+      // Instructor sin perfil = instructor normal (sin acceso a coordinación)
+      if (u.rol === 'inst' && !String(nombre || '').trim()) {
+        escribirFila_(hoja_(CONFIG.hojas.usuarios), u.fila, { 'Perfil': '' });
+        _USU = null;
+        registrar_(u, 'Perfil de acceso quitado', 'Instructor sin acceso a coordinación · por ' + nombreDe_(yo), '');
+        return true;
+      }
       const p = perfilPorNombre_(nombre);
       if (!p) throw falla_('Ese perfil no existe.');
-      exigirSinEscalar_(yo, p.niveles);
-      asegurarColumnas_(hoja_(CONFIG.hojas.usuarios), ['Perfil']);
+      exigirSinEscalar_(yo, u.rol === 'inst' ? nivelesDe_(Object.assign({}, u, { perfil: p.nombre })) : p.niveles);
       escribirFila_(hoja_(CONFIG.hojas.usuarios), u.fila, { 'Perfil': p.nombre });
       _USU = null;
-      registrar_(u, 'Perfil de acceso asignado', p.nombre + ' · por ' + nombreDe_(yo), '');
+      registrar_(u, 'Perfil de acceso asignado', p.nombre + (u.rol === 'inst' ? ' (instructor focal, solo lectura)' : '') + ' · por ' + nombreDe_(yo), '');
       return true;
     });
   });
