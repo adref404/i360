@@ -12,9 +12,10 @@
  *   Vacaciones.gs        Vacaciones por periodo DGAC: hojas, ventana de solicitud, validación, aprobación y migración
  *   SemillaVacaciones.gs Datos iniciales de vacaciones (Vacaciones_INSTRUCTORES_1.xlsx)
  *   Intercambios.gs      Intercambio de actividades entre instructores y meses ocultos a instructores
+ *   BloqueDO.gs          Solicitud de bloque de 4 días libres (DO) para el mes que se está armando
  *   Perfiles.gs          Perfiles de acceso de coordinación (Sin acceso / Ver / Gestionar por sección)
  *   Colores.gs           Catálogo de tipos de actividad y colores (TiposActividad); repintar meses
- *   Index, Estilos, Clasificador, App, VacacionesVista, IntercambiosVista, Vistas, Coordinacion, Admin (HTML)   Interfaz
+ *   Index, Estilos, Clasificador, App, VacacionesVista, IntercambiosVista, BloqueDOVista, Vistas, Coordinacion, Admin (HTML)   Interfaz
  */
 
 const CONFIG = {
@@ -55,6 +56,7 @@ const CONFIG = {
     vacProgramado: 'VacacionesProgramado',
     solVac: 'SolicitudesVacaciones',
     intercambios: 'Intercambios',
+    solDO: 'SolicitudesDO',
     tipos: 'TiposActividad',
     perfiles: 'Perfiles'
   },
@@ -109,7 +111,7 @@ const CONFIG = {
 };
 
 const VERSION_APP = '2.4';
-const ARCHIVOS_HTML_ = ['Estilos', 'FuentesLatam', 'Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'];
+const ARCHIVOS_HTML_ = ['Estilos', 'FuentesLatam', 'Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'BloqueDOVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'];
 
 function doGet(e) {
   // https://…/exec?diag=1  ->  diagnóstico en texto (sin datos personales)

@@ -79,6 +79,7 @@ function usuarios_() {
     rol: col_(h, 'rol', 'perfil'),
     flota: col_(h, 'flota'),
     cat: col_(h, 'categoria'),
+    ide: col_(h, 'ide'),   // flotas en las que es IDE (p. ej. "A320 / B767")
     est: col_(h, 'estado en dotacion'),
     act: col_(h, 'activo'),
     cargo: col_(h, 'cargo'), area: col_(h, 'area'), foto: col_(h, 'foto'), perfil: col_(h, 'perfil')
@@ -93,6 +94,7 @@ function usuarios_() {
     rol: rolDe_(celda_(r, c.rol)),
     flota: String(celda_(r, c.flota) || '').trim(),
     categoria: String(celda_(r, c.cat) || '').trim(),
+    ide: String(celda_(r, c.ide) || '').trim(),
     estado: String(celda_(r, c.est) || '').trim(),
     activo: c.act < 0 || normTxt_(celda_(r, c.act)) !== 'no',
     cargo: String(celda_(r, c.cargo) || '').trim(), area: String(celda_(r, c.area) || '').trim(), foto: String(celda_(r, c.foto) || '').trim(),
@@ -449,7 +451,7 @@ function apiUsuarios(token) {
         return {
           bp: u.bp, nombre: nombreDe_(u), nombreCorto: u.nombre, nombreCompleto: u.nombreCompleto, correo: u.correo,
           rolTxt: u.principal ? 'Administrador principal' : u.rol === 'admin' ? 'Administrador' : u.rol === 'inst' ? 'Instructor' : (u.rolTxt || 'Sin rol'),
-          rol: u.rol, activo: u.activo, principal: !!u.principal, cargo: u.cargo, area: u.area, foto: u.foto,
+          rol: u.rol, activo: u.activo, principal: !!u.principal, cargo: u.cargo, area: u.area, foto: u.foto, ide: u.ide,
           perfil: u.rol === 'admin' ? (u.principal ? 'Principal' : (u.perfil || PERFIL_DEF_)) : '',
           administrable: u.bp === yo.bp || (() => { try { exigirPuedeGestionar_(yo, u); return true; } catch (e) { return false; } })(),
           cuenta: c.h ? 'activa' : 'sin activar',

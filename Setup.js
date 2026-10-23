@@ -12,7 +12,7 @@ function instalar() {
   const ss = ss_();
   const log = [];
 
-  hoja_(CONFIG.hojas.usuarios, ['BP', 'Nombre (como aparece en el rol)', 'Nombre completo', 'Correo corporativo', 'Rol', 'Flota', 'Categoría', 'Estado en dotación', 'Activo', 'Observaciones']);
+  hoja_(CONFIG.hojas.usuarios, ['BP', 'Nombre (como aparece en el rol)', 'Nombre completo', 'Correo corporativo', 'Rol', 'Flota', 'Categoría', 'IDE', 'Estado en dotación', 'Activo', 'Observaciones']);
   const roles = hoja_(CONFIG.hojas.roles, ENC_ROLES_.slice(0, 4));
   if (!roles.getRange(1, 4).getValue()) roles.getRange(1, 4).setValue('origen');
   roles.getRange('A:A').setNumberFormat('@');

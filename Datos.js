@@ -66,7 +66,7 @@ function apiDatos(token) {
     const vig = leerVigencias_(), vigencias = {};
     Object.keys(vig).forEach(bp => { if (equipo || mio(bp)) vigencias[bp] = vig[bp]; });
     const dotacion = {};
-    usuarios_().forEach(x => { if ((equipo || mio(x.bp)) && x.rol === 'inst') dotacion[x.bp] = { flota: x.flota, categoria: x.categoria, estado: x.estado, nombreCompleto: x.nombreCompleto }; });
+    usuarios_().forEach(x => { if ((equipo || mio(x.bp)) && x.rol === 'inst') dotacion[x.bp] = { flota: x.flota, categoria: x.categoria, ide: x.ide, estado: x.estado, nombreCompleto: x.nombreCompleto }; });
     return {
       usuario: perfil,
       hoy: hoyISO_(),
@@ -75,6 +75,7 @@ function apiDatos(token) {
       vigencias: vigencias,
       dotacion: dotacion,
       vac: datosVac_(equipo, u.bp),
+      do: datosDO_(equipo, u),
       intercambios: intercambiosPara_(u),
       intAprob: u.rol === 'admin' ? infoAprobadoresInt_(u) : null,
       intConFinal: aprobadoresInt_().final.length > 0, // para dibujar los pasos del intercambio

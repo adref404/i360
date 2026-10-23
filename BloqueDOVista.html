@@ -1,0 +1,142 @@
+<script>
+/* BloqueDOVista — bloque de 4 días libres (DO) para el mes que coordinación está armando.
+   Instructor: elige en el calendario un bloque de jueves a domingo o de sábado a martes y lo envía.
+   Coordinación (pestaña Vacaciones): abre la ventana, aprueba o rechaza y ve si el bloque ya figura en el rol.
+   Los datos vienen del servidor en S.do (hoja SolicitudesDO). */
+
+const DOD = () => S.do || {cfg:{}, abierta:false, solicitudes:[], dias:4};
+const BLOQUES_DO = {4:"Jueves a domingo", 6:"Sábado a martes"};   // igual que BLOQUES_DO_ en BloqueDO.gs
+const ESTADO_DO = {pendiente:["warn","Pendiente"], aprobada:["good","Aprobado"], rechazada:["crit","Rechazado"], cancelada:["","Cancelado"]};
+const pillDO = s => { const [c,t]=ESTADO_DO[s.estado]||["",s.estado]; return `<span class="pill ${c}"><i></i>${esc(t)}</span>`; };
+const diasDO = s => { const d0=Number(s.desde.slice(8,10)), n=DOD().dias||4; return Array.from({length:n},(_,k)=>d0+k); };
+const rangoDO = (mes,d,h) => `${DOW[dowOf(mes,d)]} ${d} a ${DOW[dowOf(mes,h)]} ${h} de ${mesInfo(mes).nombre}`;
+const rangoSolDO = s => rangoDO(s.mes, Number(s.desde.slice(8,10)), Number(s.hasta.slice(8,10)));
+
+/* Bloques válidos del mes: empiezan jueves o sábado, 4 días seguidos dentro del mes, desde mañana y con cupo */
+function bloquesDO(mes){
+  const D=DOD(), n=D.dias||4, nd=mesInfo(mes).dias, cupo=Number(D.cfg.cupo)||0, oc=D.ocupacion||{}, out=[];
+  for(let d=1; d+n-1<=nd; d++){
+    const w=dowOf(mes,d); if(!BLOQUES_DO[w] || fechaDia(mes,d)<=S.hoy) continue;
+    const lleno=cupo>0 && Array.from({length:n},(_,k)=>d+k).some(k=>(oc[k]||0)>=cupo);
+    if(!lleno) out.push({d, h:d+n-1, nombre:BLOQUES_DO[w]});
+  }
+  return out;
+}
+
+/* ============ Tarjeta en Mi rol (instructor) ============ */
+function doCardHTML(bp){
+  const D=DOD(), c=D.cfg||{}, mes=c.mes;
+  const mias=D.solicitudes.filter(s=>s.bp===bp && s.mes>=mesHoy()).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+  if(!D.abierta && !mias.length) return "";
+  const activa=D.abierta && mias.find(s=>s.mes===mes && (s.estado==="pendiente"||s.estado==="aprobada"));
+  let cuerpo="";
+  if(!D.abierta) cuerpo=`<p class="hint">La solicitud de bloques no está habilitada en este momento.</p>`;
+  else if(activa) cuerpo=`<p class="hint">Ya pediste tu bloque para ${esc(mesLargo(mes))}. ${activa.estado==="pendiente"?"Si quieres otro, cancela este primero.":""}</p>`;
+  else if(D.vacMotivo) cuerpo=`<div class="note">${esc(D.vacMotivo)} No se puede pedir un bloque de días libres en un mes con vacaciones.</div>`;
+  else cuerpo=doSelectorHTML(mes);
+  const lista=mias.length?`<div><span class="eyebrow">Tus solicitudes</span><div class="fl">${mias.map(s=>`<div class="fl-i solv" style="grid-template-columns:1fr auto;cursor:default"><span>
+      <span class="t">${esc(s.bloque)}</span><br><span class="m">${esc(cap(rangoSolDO(s)))}</span>
+      ${s.decididoPor&&s.estado!=="pendiente"?`<br><span class="m">${esc(ESTADO_DO[s.estado]?ESTADO_DO[s.estado][1]:s.estado)} por ${esc(s.decididoPor)} · ${fechaCorta(s.decididoAt)}</span>`:""}
+      ${s.comInst?`<div class="cmt"><b>Tu comentario:</b> ${esc(s.comInst)}</div>`:""}${s.comCoord?`<div class="cmt coord"><b>Coordinación:</b> ${esc(s.comCoord)}</div>`:""}
+      ${s.estado==="aprobada"?`<br><span class="m">Coordinación lo tiene en cuenta al armar el rol de ${esc(mesLargo(s.mes))}.</span>`:""}</span>
+      <span class="row" style="gap:6px">${pillDO(s)}${s.estado==="pendiente"?`<button class="btn sm" data-docancel="${esc(s.id)}">Cancelar</button>`:""}</span></div>`).join("")}</div></div>`:"";
+  return `<div class="card stack" style="gap:10px;${D.abierta?"border-color:color-mix(in srgb,var(--good) 45%,var(--line))":""}">
+    <div class="row between"><h3>Bloque de ${D.dias||4} días libres${mes?` · ${esc(mesLargo(mes))}`:""}</h3><span class="pill ${D.abierta?"good":""}"><i></i>${D.abierta?"Habilitada":"No habilitada"}</span></div>
+    ${D.abierta?`<p class="hint">Pide ${D.dias||4} días libres seguidos que incluyan sábado y domingo: de <b>jueves a domingo</b> o de <b>sábado a martes</b>. Una solicitud por mes${c.hasta?`, hasta el ${esc(fmtL(parseISO(c.hasta)))}`:""}.</p>`:""}
+    ${cuerpo}${lista}</div>`;
+}
+function doSelectorHTML(mes){
+  const D=DOD(), mi=mesInfo(mes), n=D.dias||4, cupo=Number(D.cfg.cupo)||0, oc=D.ocupacion||{};
+  const B=bloquesDO(mes), pick=new Set(); B.forEach(b=>{ for(let k=b.d;k<=b.h;k++) pick.add(k); });
+  if(!B.length) return `<p class="empty">No quedan bloques disponibles en ${esc(mesLargo(mes))}.</p>`;
+  const sel=S.selDO, enSel=d=>sel&&d>=sel&&d<sel+n;
+  const tiles=[]; const off=(dowOf(mes,1)+6)%7; for(let k=0;k<off;k++) tiles.push("<div></div>");
+  for(let d=1; d<=mi.dias; d++){
+    const w=dowOf(mes,d), fds=(w===0||w===6)?"fds":"", lleno=cupo>0&&(oc[d]||0)>=cupo, p=pick.has(d);
+    tiles.push(`<button class="tile ${enSel(d)?"k-SEL":"k-NO"} ${fds} ${p?"pick":""}" ${p?`data-dopick="${d}"`:"tabindex=\"-1\""} aria-label="${d}${enSel(d)?": en tu bloque":lleno?": cupo completo":""}">
+      <span class="d num">${d}</span><span class="c"><span>${enSel(d)?"DO":""}</span><small>${enSel(d)?"Libre":lleno?"Lleno":""}</small></span></button>`);
+  }
+  const opc=S.doOpc&&S.doOpc.length>1?`<div class="row" style="gap:8px;flex-wrap:wrap"><span class="hint">Ese día está en dos bloques:</span>${S.doOpc.map(b=>`<button class="btn sm ${sel===b.d?"primary":""}" data-doopc="${b.d}">${esc(b.nombre)} (${b.d}–${b.h})</button>`).join("")}</div>`:"";
+  const panel=sel?`<div class="selpanel"><div class="row between"><div><span class="eyebrow">Tu bloque</span><div class="selnum"><b>${esc(BLOQUES_DO[dowOf(mes,sel)])}</b></div><span class="hint">${esc(cap(rangoDO(mes,sel,sel+n-1)))}</span></div>
+      <div class="row"><button class="btn sm" data-doclear="1">Limpiar</button><button class="btn primary" data-dosend="1">Enviar solicitud</button></div></div>
+      <div class="field"><label for="doCom">Comentario para coordinación <span class="hint">(opcional)</span></label><textarea class="input" id="doCom" maxlength="500" rows="2">${esc(S.doCom||"")}</textarea></div></div>`
+    :`<div class="selpanel empty"><b>Toca un día del bloque que quieres</b><span class="hint">Solo se pueden elegir los días que forman un bloque de jueves a domingo o de sábado a martes${cupo?`, con cupo de ${cupo} instructores por día`:""}.</span></div>`;
+  return `<div class="cal">${["lun","mar","mié","jue","vie","sáb","dom"].map(d=>`<div class="dow">${d}</div>`).join("")}${tiles.join("")}</div>${opc}${panel}`;
+}
+
+/* ============ Sección en la pestaña Vacaciones (coordinación) ============ */
+/* ¿El bloque ya figura como DO en el rol publicado? null = el rol de ese mes todavía no está en la app */
+function enRolDO(s){ const p=MO.personas[s.bp], m=p&&p.meses[s.mes]; if(!m) return null; return diasDO(s).every(d=>m[d-1]&&m[d-1].k==="DO"); }
+function doAdmHTML(){
+  const D=DOD(), c=D.cfg||{}, puedo=gestiona("vac"), dis=puedo?"":"disabled";
+  const sols=D.solicitudes.slice().sort((a,b)=>String(a.desde).localeCompare(String(b.desde)));
+  const pend=sols.filter(s=>s.estado==="pendiente"), apr=sols.filter(s=>s.estado==="aprobada" && s.mes>=mesHoy());
+  const dec=sols.filter(s=>s.estado==="rechazada"||s.estado==="cancelada").sort((a,b)=>String(b.decididoAt).localeCompare(String(a.decididoAt))).slice(0,10);
+  const nom=s=>esc((MO.personas[s.bp]||{}).nombre||s.nombre||s.bp);
+  const fila=(s,acc)=>{ const r=s.estado==="aprobada"?enRolDO(s):undefined;
+    return `<div class="obs-item solv" id="do-${esc(s.id)}"><div class="h"><b>${nom(s)}</b>${pillDO(s)}</div>
+      <p><b>${esc(s.bloque)}</b> · ${esc(cap(rangoSolDO(s)))}</p><span class="hint">enviada ${fechaCorta(s.at)}${s.decididoPor&&!acc?` · ${esc((ESTADO_DO[s.estado]||["",s.estado])[1].toLowerCase())} por ${esc(s.decididoPor)}`:""}</span>
+      ${r===true?`<span class="pill good"><i></i>Ya figura como DO en el rol</span>`:r===false?`<span class="pill warn"><i></i>Falta pasarlo al rol de ${esc(mesLargo(s.mes))}</span>`:r===null?`<span class="hint">El rol de ${esc(mesLargo(s.mes))} todavía no está en la app: tenlo en cuenta al armarlo.</span>`:""}
+      ${s.comInst?`<div class="cmt"><b>${nom(s)}:</b> ${esc(s.comInst)}</div>`:""}${s.comCoord?`<div class="cmt coord"><b>Coordinación:</b> ${esc(s.comCoord)}</div>`:""}
+      ${acc&&puedo?`<div class="row"><button class="btn sm primary" data-dodec="${esc(s.id)}" data-est="aprobada">Aprobar</button><button class="btn sm" data-dodec="${esc(s.id)}" data-est="rechazada">Rechazar</button></div>`:""}</div>`; };
+  // Resumen por bloque del mes abierto: cuántos pidieron y cuántos están aprobados
+  const res=c.mes?bloquesTodosDO(c.mes).map(b=>{ const l=sols.filter(s=>s.mes===c.mes&&Number(s.desde.slice(8,10))===b.d); const p=l.filter(s=>s.estado==="pendiente").length, a=l.filter(s=>s.estado==="aprobada").length;
+    return p||a?`<tr><td>${esc(b.nombre)}</td><td>${esc(rangoDO(c.mes,b.d,b.h))}</td><td class="num">${p}</td><td class="num">${a}</td></tr>`:""; }).join(""):"";
+  return `<div class="grid2e" style="align-items:start">
+    <div class="card stack" style="gap:12px">
+      <div class="row between"><h3>Bloque de ${D.dias||4} días libres (DO)</h3><span class="pill ${D.abierta?"good":""}"><i></i>${D.abierta?"Habilitada":"No habilitada"}</span></div>
+      <p class="hint">Cada instructor pide ${D.dias||4} días libres seguidos con sábado y domingo (jueves a domingo o sábado a martes) para el mes que estás armando. Una solicitud por instructor y mes; no se permite si tiene vacaciones ese mes. La solicitud no cambia el rol: al aprobarla, pásala al Google Sheet del mes cuando lo armes.</p>
+      <form id="fDO" class="stack" style="gap:10px" novalidate>
+        <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="doOn" ${c.habilitado?"checked":""} ${dis}> Habilitar solicitudes</label>
+        <div class="field" style="max-width:220px"><label for="doMes">Mes de los bloques</label><input class="input" type="month" id="doMes" value="${esc(c.mes||"")}" ${dis}></div>
+        <div class="grid2e" style="gap:10px"><div class="field"><label for="doDesde">Abierta desde</label><input class="input" type="date" id="doDesde" value="${esc(c.desde||"")}" ${dis}></div><div class="field"><label for="doHasta">Abierta hasta</label><input class="input" type="date" id="doHasta" value="${esc(c.hasta||"")}" ${dis}></div></div>
+        <div class="field" style="max-width:260px"><label for="doCupo">Cupo por día (0 = sin límite)</label><input class="input" type="number" min="0" max="30" id="doCupo" value="${esc(c.cupo||0)}" ${dis}></div>
+        <p class="err" id="doErr"></p>
+        ${puedo?`<div><button class="btn primary" type="submit" id="doBtn">Guardar</button></div>`:""}
+      </form>
+      ${res?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Bloque</th><th>Días</th><th>Pedidos</th><th>Aprobados</th></tr></thead><tbody>${res}</tbody></table></div>`:""}
+    </div>
+    <div class="card"><div class="row between" style="margin-bottom:8px"><h3>Bloques por revisar</h3><span class="pill ${pend.length?"warn":""}">${pend.length}</span></div>
+      ${pend.length?`<div class="obs">${pend.map(s=>fila(s,true)).join("")}</div>`:`<p class="empty">No hay bloques pendientes.</p>`}
+      ${apr.length?`<h3 style="margin:14px 0 8px">Aprobados</h3><div class="obs">${apr.map(s=>fila(s,false)).join("")}</div>`:""}
+      ${dec.length?`<h3 style="margin:14px 0 8px">Rechazados y cancelados</h3><div class="obs">${dec.map(s=>fila(s,false)).join("")}</div>`:""}</div>
+  </div>`;
+}
+/* Todos los bloques posibles del mes (sin filtrar por fecha ni cupo), para el resumen de coordinación */
+function bloquesTodosDO(mes){ const n=DOD().dias||4, nd=mesInfo(mes).dias, out=[]; for(let d=1; d+n-1<=nd; d++){ const w=dowOf(mes,d); if(BLOQUES_DO[w]) out.push({d,h:d+n-1,nombre:BLOQUES_DO[w]}); } return out; }
+
+function abrirDecidirDO(id, estado){
+  const s=DOD().solicitudes.find(x=>x.id===id); if(!s) return;
+  const ok=estado==="aprobada";
+  abrirPanel(ok?"Aprobar bloque de días libres":"Rechazar bloque de días libres", esc(`${(MO.personas[s.bp]||{}).nombre||s.nombre} · ${cap(rangoSolDO(s))}`),
+    `<form id="fDOD" class="stack" style="gap:8px"><div class="field"><label for="doDCom">Comentario para el instructor <span class="hint">(opcional)</span></label><textarea class="input" id="doDCom" maxlength="500" rows="3"></textarea></div>
+      ${ok?`<p class="hint">El rol no cambia solo: recuerda poner DO en esos días al armar el Google Sheet de ${esc(mesLargo(s.mes))}.</p>`:""}
+      <p class="err" id="doDErr"></p><div class="row"><button class="btn ${ok?"primary":"danger"}" type="submit" id="doDBtn">${ok?"Aprobar":"Rechazar"}</button><button class="btn" type="button" id="doDX">Cancelar</button></div></form>`);
+  document.getElementById("doDX").onclick=cerrarPanel;
+  document.getElementById("fDOD").onsubmit=async e=>{ e.preventDefault(); const b=document.getElementById("doDBtn"); setCargando(b,true,"…");
+    try{ const r=await api("apiDecidirDO",S.token,id,estado,document.getElementById("doDCom").value); S.do=r.do; cerrarPanel(); toast(ok?"Bloque aprobado":"Bloque rechazado"); render(); }
+    catch(err){ setCargando(b,false); const el=document.getElementById("doDErr"); if(el) el.textContent=err.message; } };
+}
+
+function wireDO(){
+  document.querySelectorAll("[data-dopick]").forEach(b=>b.onclick=()=>{ const d=Number(b.dataset.dopick), mes=DOD().cfg.mes;
+    const opc=bloquesDO(mes).filter(x=>d>=x.d&&d<=x.h); if(!opc.length) return;
+    S.doOpc=opc; if(!opc.some(x=>x.d===S.selDO)) S.selDO=opc[0].d; render(); });
+  document.querySelectorAll("[data-doopc]").forEach(b=>b.onclick=()=>{ S.selDO=Number(b.dataset.doopc); render(); });
+  const dc=document.getElementById("doCom"); if(dc) dc.oninput=()=>{ S.doCom=dc.value; };
+  document.querySelectorAll("[data-doclear]").forEach(b=>b.onclick=()=>{ S.selDO=null; S.doOpc=null; render(); });
+  document.querySelectorAll("[data-dosend]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Enviando…");
+    try{ const r=await api("apiSolicitarDO",S.token,S.selDO,S.doCom||"",dispositivo()); S.do=r.do; S.selDO=null; S.doOpc=null; S.doCom=""; toast("Bloque enviado a coordinación"); render(); }
+    catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-docancel]").forEach(b=>b.onclick=async()=>{ if(!confirm("¿Cancelar tu solicitud de bloque de días libres?")) return; setCargando(b,true,"…");
+    try{ const r=await api("apiCancelarDO",S.token,b.dataset.docancel); S.do=r.do; toast("Solicitud cancelada"); render(); }
+    catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-dodec]").forEach(b=>b.onclick=()=>abrirDecidirDO(b.dataset.dodec,b.dataset.est));
+  const f=document.getElementById("fDO"); if(f) f.onsubmit=async e=>{ e.preventDefault(); const b=document.getElementById("doBtn"); if(!b) return; setCargando(b,true,"Guardando…");
+    const v=id=>document.getElementById(id).value;
+    try{ S.do=await api("apiGuardarCfgDO",S.token,{habilitado:document.getElementById("doOn").checked, mes:v("doMes"), desde:v("doDesde"), hasta:v("doHasta"), cupo:v("doCupo")}); toast("Ventana de bloques guardada"); render(); }
+    catch(err){ setCargando(b,false); document.getElementById("doErr").textContent=err.message; } };
+}
+
+window.__archivos=(window.__archivos||{}); window.__archivos["BloqueDOVista"]="v2.4";
+</script>

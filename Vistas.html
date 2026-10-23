@@ -57,7 +57,7 @@ function vistaUsuario(bp, desdeAdmin){
 
   return `
   <div class="pagehead"><div>${desdeAdmin?`<span class="eyebrow">Información del instructor</span>`:`<span class="eyebrow">Mi información · Freeze ${mi.y}</span>`}<h1>${esc(pe.nombre)}</h1>
-    <p class="sub">${pe.flota?`Flotas ${esc(pe.flota)} · `:""}<span class="mono">BP ${esc(bp)}</span></p></div>${mesNav(mesesUsuario())}</div>
+    <p class="sub">${pe.flota?`Flotas ${esc(pe.flota)} · `:""}${pe.ide?`IDE ${esc(pe.ide)} · `:""}<span class="mono">BP ${esc(bp)}</span></p></div>${mesNav(mesesUsuario())}</div>
   <div class="u-kpis">
     <button class="kpi" ${drill(()=>abrirDrill(`Vuelos de instrucción · ${esc(pe.nombre)}`,`${mesLargo(mesF)}`,sM.reg.filter(r=>r.x.k==="VIN")))}>
       <span class="l">Vuelos como instructor en ${miF.nombre}</span><span class="v num">${sM.vin}</span>
@@ -85,7 +85,7 @@ function vistaUsuario(bp, desdeAdmin){
       ${enFreeze?`<div class="row between">${toggleColSheetHTML()}</div>`+codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
       ${enFreeze?`<div style="border-top:1px solid var(--line);padding-top:12px"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sMc)}</div>`:""}
     </div>
-    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${propio&&S.usuario.rol==="inst"?abiertosCardHTML(bp):""}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
+    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${propio&&S.usuario.rol==="inst"?doCardHTML(bp)+abiertosCardHTML(bp):""}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
   </div>
   <div class="u-grid" style="margin-top:16px">
     <div class="stack">

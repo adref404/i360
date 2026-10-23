@@ -486,6 +486,7 @@ function admVac(){
         ${pend.length?`<div class="obs">${pend.map(s=>solRow(s,true)).join("")}</div>`:`<p class="empty">No hay solicitudes pendientes.</p>`}
         ${dec.length?`<h3 style="margin:14px 0 8px">Últimas decididas</h3><div class="obs">${dec.map(s=>solRow(s,false)).join("")}</div>`:""}</div>
     </div>
+    ${doAdmHTML()}
     ${T.secciones}
     ${vacEquipoHTML()}
     <p class="foot">Fuente: ${esc(VAC().fuente||"hoja Vacaciones")} (hojas Vacaciones, VacacionesDias y VacacionesBloques del Google Sheet base). El derecho de cada periodo viene de la hoja VacacionesPeriodos; los periodos sin dato suman 1 día por renovación hasta 45. Las solicitudes aprobadas cuentan como programadas.</p>

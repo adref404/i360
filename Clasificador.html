@@ -148,6 +148,7 @@ function construirModelo(P){
   });
   Object.values(personas).forEach(pe=>{
     const d=(P.dotacion||{})[pe.bp]; pe.flota = d&&d.flota&&!/^(null|nb|wb)$/i.test(d.flota) ? d.flota : null;
+    pe.ide = d&&d.ide ? d.ide : null;
     pe.bg=(P.vigencias||{})[pe.bp]||null;
     pe.perfil="tierra";
   });

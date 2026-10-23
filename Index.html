@@ -81,6 +81,7 @@
 <?!= include('App'); ?>
 <?!= include('VacacionesVista'); ?>
 <?!= include('IntercambiosVista'); ?>
+<?!= include('BloqueDOVista'); ?>
 <?!= include('ColoresVista'); ?>
 <?!= include('Vistas'); ?>
 <?!= include('Coordinacion'); ?>
@@ -88,7 +89,7 @@
 <script>
 (function(){
   window.__cargando = false;
-  var faltan = ['Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
+  var faltan = ['Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'BloqueDOVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'].filter(function(n){ return !window.__archivos[n]; });
   var tecnico = window.__errorCarga ? '\n\nDetalle técnico: ' + window.__errorCarga : '';
   if (faltan.length) {
     window.__fallaArranque('Archivo incompleto o con error: ' + faltan.join(', '),

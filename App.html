@@ -148,6 +148,7 @@ function aplicarDatos(P, mantener){
   S.resp=P.respuestas||{};
   S.vac=P.vac||{personas:{}, solicitudes:[], cfg:null, ventanaUltima:null, fuente:""}; resetVac();
   S.intercambios=P.intercambios||[]; S.intAprob=P.intAprob||null; S.intConFinal=!!P.intConFinal;
+  S.do=P.do||null; S.selDO=null; S.doOpc=null;
   const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
   MO=construirModelo(P); STC={};
   if(!mantener || !MO.orden.includes(S.mes)) S.mes=mesInicial();
@@ -414,7 +415,7 @@ const ICONO_NAV = {
 function pendientesNav(k){
   if(!gestiona(k) && k!=="int") return 0;
   try{
-    if(k==="vac"){ const s=(S.vac&&S.vac.solicitudes)||[]; return s.filter(x=>x.estado==="pendiente").length+s.filter(revisionPendiente).length; }
+    if(k==="vac"){ const s=(S.vac&&S.vac.solicitudes)||[]; return s.filter(x=>x.estado==="pendiente").length+s.filter(revisionPendiente).length+DOD().solicitudes.filter(x=>x.estado==="pendiente").length; }
     if(k==="int"){ const A=intAprob(); return intercambios().filter(x=>(x.estado==="en_supervisor"&&A.soyRevisor)||(x.estado==="en_jefe"&&A.soyFinal)).length; }
   }catch(e){}
   return 0;
@@ -505,6 +506,7 @@ function wire(){
   const sm=$("#selMes"); if(sm) sm.onchange=()=>irAMes(sm.value);
   document.querySelectorAll("[data-messtep]").forEach(b=>b.onclick=()=>{ const L=listaMesesActual(); const i=L.indexOf(S.mes)+Number(b.dataset.messtep); if(L[i]) irAMes(L[i]); });
   wireVac();
+  wireDO();
   document.querySelectorAll("[data-side]").forEach(b=>b.onclick=()=>{ if(b.dataset.side==="mini") alternarMenu(); else cerrarMenuMovil(); });
   document.querySelectorAll("[data-sideact]").forEach(b=>b.onclick=()=>{ cerrarMenuMovil(); if(b.dataset.sideact==="salir") confirmarSalir(); else if(b.dataset.sideact==="preferencias") abrirPreferencias(); else abrirCambiarClave(); });
   document.querySelectorAll("[data-atab]").forEach(b=>b.onclick=()=>{ cerrarMenuMovil(); scrollTo(0,0); S.tab=b.dataset.atab; if(S.tab==="cargar"){ S.fuentes=null; S.fuentesMsg=""; } if(S.tab==="colores"){ S.tipos=null; S.colVista=null; S.colImport=null; } if(S.tab==="usuarios") S.adm=null; render(); });
