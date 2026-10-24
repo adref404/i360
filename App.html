@@ -101,6 +101,7 @@ function api(fn, ...args){
         const e=new Error((r&&r.error)||"No se pudo completar la acción."); e.codigo=r&&r.codigo;
         if(e.codigo==="SESION" && S.usuario){ sesionTerminada(e.message); }
         if(e.codigo==="YA_RESUELTO" && S.usuario){ yaResueltoAviso(e.message); }
+        if(e.codigo==="ROL_CAMBIO" && S.usuario){ yaResueltoAviso(e.message, "El rol cambió"); }
         no(e);
       })
       .withFailureHandler(err=>{ const det=err&&err.message?err.message:String(err||""); console.error("Apps Script",fn,err);
@@ -149,6 +150,7 @@ function aplicarDatos(P, mantener){
   S.vac=P.vac||{personas:{}, solicitudes:[], cfg:null, ventanaUltima:null, fuente:""}; resetVac();
   S.intercambios=P.intercambios||[]; S.intAprob=P.intAprob||null; S.intConFinal=!!P.intConFinal;
   S.do=P.do||null; S.selDO=null; S.doOpc=null;
+  marcaRoles=P.cambioRoles||"";
   const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
   MO=construirModelo(P); STC={};
   if(!mantener || !MO.orden.includes(S.mes)) S.mes=mesInicial();
@@ -164,6 +166,25 @@ function mesInicial(){
   return prev.length? prev[prev.length-1] : MO.orden[0];
 }
 async function recargar(){ STC={}; await cargarDatos(true); }
+
+/* ============ Actualización automática ============
+   Cada 60 s (con la pestaña visible) se pregunta al servidor si cambió algún rol (consulta liviana: no lee hojas). Si cambió, se recargan los datos
+   sin recargar la página. Se espera si hay un diálogo abierto, algo escrito o una selección sin enviar. */
+let marcaRoles="", ultimaRevision=0;
+async function revisarCambios(){
+  if(!S.usuario || !S.listo || document.visibilityState!=="visible") return;
+  if(Date.now()-ultimaRevision<20000) return;   // al cambiar de pestaña seguido no se repite la consulta
+  ultimaRevision=Date.now();
+  try{
+    const r=await api("apiCambios");
+    if(!r || r.roles===marcaRoles) return;
+    const ocupado=document.querySelector(".scrim") || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement||{}).tagName||"") || (S.selVac&&S.selVac.size) || S.selDO;
+    if(ocupado) return; // se reintenta en la próxima vuelta
+    await recargar(); toast("El rol se actualizó");
+  }catch(e){ /* sin conexión: se reintenta */ }
+}
+setInterval(revisarCambios, 60000);
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") revisarCambios(); });
 
 /* ============ Render raíz ============ */
 function pintarCabecera(){
@@ -313,12 +334,12 @@ function entrar(r){
 }
 /* Otro usuario resolvió lo mismo antes: se avisa, se cierran los diálogos y se recargan los datos */
 let avisoConflicto=false;
-function yaResueltoAviso(msg){
+function yaResueltoAviso(msg, titulo){
   if(avisoConflicto) return; avisoConflicto=true;
   document.querySelectorAll(".scrim").forEach(x=>x.remove());
   const sc=document.createElement("div"); sc.className="scrim center";
   sc.innerHTML=`<div class="sheet confirm" role="alertdialog" aria-modal="true" aria-labelledby="yrT"><span class="confirm-ic info" aria-hidden="true">${svgUI('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>')}</span>
-    <h2 id="yrT">Ya se resolvió</h2><p class="hint">${esc(msg)}</p><div class="row confirm-acts"><button class="btn primary" type="button" id="yrOk">Entendido</button></div></div>`;
+    <h2 id="yrT">${esc(titulo||"Ya se resolvió")}</h2><p class="hint">${esc(msg)}</p><div class="row confirm-acts"><button class="btn primary" type="button" id="yrOk">Entendido</button></div></div>`;
   document.body.appendChild(sc);
   const ok=()=>{ sc.remove(); avisoConflicto=false; };
   $("#yrOk",sc).onclick=ok; sc.addEventListener("click",e=>{ if(e.target===sc) ok(); });
@@ -541,7 +562,7 @@ function wire(){
   document.querySelectorAll("[data-pausa]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"…");
     try{ await api("apiActivarFuente",S.token,b.dataset.pausa,b.dataset.on==="1"); S.fuentes=null; render(); }catch(e){ setCargando(b,false); toast(e.message); } });
   const au=$("#autoSync"); if(au) au.onchange=async()=>{ au.disabled=true;
-    try{ const on=await api("apiSincronizacionAutomatica",S.token,au.checked); S.fuentes.automatica=on; toast(on?"Se sincronizará cada hora":"Sincronización automática desactivada"); }catch(e){ au.checked=!au.checked; toast(e.message); } au.disabled=false; };
+    try{ const on=await api("apiSincronizacionAutomatica",S.token,au.checked); toast(on?"Listo: los cambios en el Google Sheet se verán en segundos (y cada hora como respaldo)":"Sincronización automática desactivada"); S.fuentes=null; render(); return; }catch(e){ au.checked=!au.checked; toast(e.message); } au.disabled=false; };
   document.querySelectorAll("[data-act='recargarFuentes']").forEach(b=>b.onclick=()=>{ S.fuentes=null; render(); });
   const fx=$("#fileX"), dr=$("#drop");
   if(fx) fx.onchange=()=>{ if(fx.files[0]) leerExcel(fx.files[0]); };

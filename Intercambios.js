@@ -18,7 +18,8 @@ const ENC_INT_ = ['ID', 'Mes', 'Días', 'Solicitante BP', 'Solicitante', 'Recept
 const EST_INT_ = {
   abierto: 'Publicado (rol abierto)', pendiente: 'Pendiente', en_supervisor: 'En revisión de coordinación', en_jefe: 'En aprobación final',
   rechazado_receptor: 'Rechazado por receptor', rechazado_jefe: 'Rechazado en aprobación final',
-  aprobado: 'Aprobado', rechazado_supervisor: 'Rechazado por supervisor', cancelado: 'Cancelado'
+  aprobado: 'Aprobado', rechazado_supervisor: 'Rechazado por supervisor', cancelado: 'Cancelado',
+  anulado: 'Anulado: el rol cambió'
 };
 const MAX_DIAS_INT_ = 7;
 
@@ -55,6 +56,7 @@ function estadoIntDeTexto_(t) {
   if (/^rechazado por supervisor/.test(n)) return 'rechazado_supervisor';
   if (/^aprobado/.test(n)) return 'aprobado';
   if (/^cancelado/.test(n)) return 'cancelado';
+  if (/^anulado/.test(n)) return 'anulado';
   return 'pendiente';
 }
 function jsonArr_(v) { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch (e) { return []; } }
@@ -140,7 +142,7 @@ function apiOpcionesIntercambio(token, mes, dia) {
   });
 }
 
-function apiCrearIntercambio(token, mes, dias, receptorBp, comentario, disp) {
+function apiCrearIntercambio(token, mes, dias, receptorBp, comentario, disp, vistos) {
   return responder_(() => {
     const u = sesion_(token).u;
     mes = mesTxt_(mes); receptorBp = bpTxt_(receptorBp);
@@ -160,6 +162,7 @@ function apiCrearIntercambio(token, mes, dias, receptorBp, comentario, disp) {
       if (!a) throw falla_('No figuras en el rol de ese mes.');
       if (!b) throw falla_('Ese instructor no figura en el rol de ese mes.');
       const actA = lista.map(d => a.dias[d - 1] || ''), actB = lista.map(d => b.dias[d - 1] || '');
+      if (vistos) { exigirLoVisto_(vistos.sol, actA); exigirLoVisto_(vistos.rec, actB); }
       if (actA.every((x, k) => normCelda_(x) === normCelda_(actB[k]))) throw falla_('Ambos tienen la misma actividad en esos días.');
       const cruza = x => x.mes === mes && x.dias.some(d => lista.indexOf(d) >= 0);
       const todos = leerIntercambios_();
@@ -206,6 +209,7 @@ function apiResponderIntercambio(token, id, acepta, comentario, disp) {
         if (otro) throw falla_((otro.solBp === u.bp || otro.recBp === u.bp ? 'Ya tienes' : x.solNombre + ' ya tiene') + ' otro intercambio aceptado esos días, esperando a coordinación. Rechaza este o espera esa decisión.');
         if (abiertoQueCruza_(leerIntercambios_(), u.bp, x.mes, x.dias))
           throw falla_('Tienes esos días publicados como rol abierto. Retira la publicación antes de aceptar este intercambio.');
+        exigirRolVigenteInt_(x);
       }
       const est = acepta ? 'en_supervisor' : 'rechazado_receptor';
       escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_[est], 'Comentario receptor': com, 'Respondido receptor': new Date(), 'Visto receptor': est });
@@ -264,7 +268,7 @@ function diasIntValidos_(mes, dias) {
 }
 
 /** El instructor publica su actividad de uno o más días seguidos para que cualquier compañero del rol la tome. */
-function apiPublicarAbierto(token, mes, dias, comentario, disp) {
+function apiPublicarAbierto(token, mes, dias, comentario, disp, vistos) {
   return responder_(() => {
     const u = sesion_(token).u;
     mes = mesTxt_(mes);
@@ -279,6 +283,7 @@ function apiPublicarAbierto(token, mes, dias, comentario, disp) {
       if (!a) throw falla_('No figuras en el rol de ese mes.');
       const actA = lista.map(d => a.dias[d - 1] || '');
       if (actA.every(t => !normCelda_(t))) throw falla_('Esos días no tienen actividad asignada: no hay nada que ofrecer.');
+      exigirLoVisto_(vistos, actA);
       const todos = leerIntercambios_();
       const cruza = x => x.mes === mes && x.dias.some(d => lista.indexOf(d) >= 0);
       if (abiertoQueCruza_(todos, u.bp, mes, lista)) throw falla_('Ya publicaste un rol abierto que incluye esos días.');
@@ -303,7 +308,7 @@ function apiPublicarAbierto(token, mes, dias, comentario, disp) {
 }
 
 /** Un compañero toma un rol abierto: queda como receptor y el intercambio pasa directo a revisión de coordinación. */
-function apiTomarAbierto(token, id, comentario, disp) {
+function apiTomarAbierto(token, id, comentario, disp, vistos) {
   return responder_(() => {
     const u = sesion_(token).u;
     if (u.rol !== 'inst') throw falla_('Solo los instructores pueden tomar un rol abierto.');
@@ -323,13 +328,10 @@ function apiTomarAbierto(token, id, comentario, disp) {
       const m = rolDelMes_(x.mes);
       const a = m.instructores.find(i => i.bp === x.solBp), b = m.instructores.find(i => i.bp === u.bp);
       if (!b) throw falla_('No figuras en el rol de ese mes.');
-      // El rol de quien publicó cambió desde entonces (edición en el Google Sheet u otro intercambio aprobado)
-      if (!a || x.dias.some((d, k) => normCelda_(a.dias[d - 1]) !== normCelda_(x.actSol[k]))) {
-        escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_.cancelado, 'Decidido': new Date(),
-          'Aplicación': 'Cerrado automáticamente: el rol de ' + x.solNombre + ' cambió desde que se publicó · ' + hoyISO_() });
-        throw falla_('El rol de ' + x.solNombre + ' en esos días cambió desde que lo publicó, así que la oferta se cerró. Ya actualizamos tu pantalla.', 'YA_RESUELTO');
-      }
+      if (!a) throw falla_(x.solNombre + ' ya no figura en el rol de ese mes.');
+      exigirRolVigenteInt_(x); // el rol de quien publicó cambió desde entonces: se anula
       const actB = x.dias.map(d => b.dias[d - 1] || '');
+      exigirLoVisto_(vistos, actB);
       if (actB.every((t, k) => normCelda_(t) === normCelda_(x.actSol[k]))) throw falla_('Tienes la misma actividad que ' + x.solNombre + ' esos días: no hay nada que intercambiar.');
       if (abiertoQueCruza_(todos, u.bp, x.mes, x.dias)) throw falla_('Tú también publicaste esos días como rol abierto. Retira tu publicación antes de tomar esta.');
       const comp = todos.find(z => z.id !== x.id && z.mes === x.mes && comprometidoInt_(z) && z.dias.some(d => x.dias.indexOf(d) >= 0) &&
@@ -413,6 +415,7 @@ function apiDecidirIntercambio(token, id, aprueba, comentario, pasoEsperado) {
       if (!puedeDecidirInt_(yo, paso, ap)) throw falla_(paso === 'revision'
         ? 'La revisión de coordinación la hacen: ' + (ap.revision.map(nombreDe_).join(', ') || 'quien gestione Intercambios') + '.'
         : 'La aprobación final la hace: ' + ap.final.map(nombreDe_).join(', ') + '.', 'PERMISO');
+      if (aprueba) exigirRolVigenteInt_(x);
       const sh = hojaInt_();
       const rango = rangoDiasTxt_(x.mes, x.dias);
       // Paso 1 aprobado y hay aprobación final: pasa a Jorge (no toca el Sheet todavía)
@@ -475,6 +478,54 @@ function apiAprobadoresIntercambio(token, cfg) {
   });
 }
 
+/* ---------------- Rol al día ----------------
+   El rol se edita en el Google Sheet y la copia se actualiza en segundos (alCambiarRol), pero entre una edición y que
+   la pantalla se refresque alguien puede decidir con el rol anterior. Por eso:
+   - al proponer, publicar o tomar, se compara lo que la persona vio con la copia vigente (exigirLoVisto_);
+   - al aceptar o aprobar, si las actividades ya no son las pedidas, el intercambio se anula (exigirRolVigenteInt_);
+   - después de cada sincronización se anulan los intercambios en curso que quedaron desfasados (anularDesfasados_).
+   La aprobación final además compara con el Google Sheet en vivo antes de escribir (aplicarIntercambio_). */
+
+/** Días en que el rol ([{bp, dias}]) ya no tiene las actividades pedidas. Sin receptor (rol abierto), solo el solicitante. */
+function diasDesfasadosInt_(x, instructores) {
+  const a = instructores.find(i => i.bp === x.solBp), b = x.recBp ? instructores.find(i => i.bp === x.recBp) : null;
+  if (!a || (x.recBp && !b)) return []; // alguien salió del rol: lo detecta la aprobación final
+  return x.dias.filter((d, k) => normCelda_(a.dias[d - 1]) !== normCelda_(x.actSol[k]) || (b && normCelda_(b.dias[d - 1]) !== normCelda_(x.actRec[k])));
+}
+
+function anularInt_(x, dias) {
+  const que = x.recBp ? 'el intercambio' : 'el rol abierto';
+  escribirFila_(hojaInt_(), x.fila, { 'Estado': EST_INT_.anulado, 'Decidido': new Date(),
+    'Aplicación': 'Anulado automáticamente: el rol ' + rangoDiasTxt_(x.mes, dias) + ' cambió en el Google Sheet · ' + hoyISO_() });
+  notificarInt_(x.id, 'Se anuló ' + que + ': el rol ' + rangoDiasTxt_(x.mes, dias) + ' cambió en el Google Sheet desde que se pidió.', [],
+    'Si todavía quieren intercambiar, propónganlo de nuevo con el rol actualizado.');
+}
+
+/** Después de cada sincronización: anula los intercambios en curso del mes que ya no coinciden con el rol nuevo. */
+function anularDesfasados_(rol, excluirId) {
+  return conBloqueo_(() => leerIntercambios_().filter(x => x.mes === rol.mes && x.id !== excluirId && activoInt_(x)).filter(x => {
+    const dias = diasDesfasadosInt_(x, rol.instructores);
+    if (dias.length) anularInt_(x, dias);
+    return dias.length > 0;
+  }).length);
+}
+
+/** Antes de aceptar, aprobar o tomar: si el rol vigente ya no coincide, se anula y se avisa (la pantalla se actualiza). */
+function exigirRolVigenteInt_(x) {
+  const dias = diasDesfasadosInt_(x, rolDelMes_(x.mes).instructores);
+  if (!dias.length) return;
+  anularInt_(x, dias);
+  throw falla_('El rol ' + rangoDiasTxt_(x.mes, dias) + ' cambió en el Google Sheet desde que se pidió, así que ' + (x.recBp ? 'el intercambio' : 'el rol abierto') +
+    ' quedó anulado. Ya actualizamos tu pantalla.', 'ROL_CAMBIO');
+}
+
+/** Lo que la persona vio en pantalla frente a la copia vigente. Las páginas abiertas con la versión anterior no lo envían. */
+function exigirLoVisto_(vistos, actuales) {
+  if (!Array.isArray(vistos) || vistos.length !== actuales.length) return;
+  if (vistos.some((v, k) => normCelda_(v) !== normCelda_(actuales[k])))
+    throw falla_('El rol de esos días cambió hace un momento. Ya actualizamos tu pantalla: revisa las actividades y vuelve a intentarlo.', 'ROL_CAMBIO');
+}
+
 /* ---------------- Aplicar en el Google Sheet del mes ---------------- */
 
 const normCelda_ = s => String(s == null ? '' : s).replace(/\r/g, '').replace(/\s+/g, ' ').trim();
@@ -516,7 +567,7 @@ function aplicarIntercambio_(x, yo) {
   let pintadas = 0;
   try { pintadas = pintarSegunCatalogo_(A) + pintarSegunCatalogo_(B); } catch (e) { console.warn('No se pudo pintar con el catálogo: ' + e.message); }
   SpreadsheetApp.flush();
-  const s = sincronizarFuente_(f);
+  const s = sincronizarFuente_(f, x.id);
   return 'Aplicado en el Google Sheet' + (pintadas ? ', pintado según el catálogo' : '') + (s.ok ? ' y sincronizado' : ' (sincroniza el mes: ' + s.error + ')') + ' · ' + hoyISO_();
 }
 
@@ -629,7 +680,8 @@ function historialIntHtml_(x) {
   const directo = x.revisor && x.supervisor === x.revisor && f(x.revisado) === f(x.decidido);
   if ((x.estadoGuardado === 'aprobado' || x.estadoGuardado === 'rechazado_jefe') && x.supervisor && !directo)
     filas.push([x.decidido, x.supervisor, x.estadoGuardado === 'aprobado' ? 'Aprobó (aprobación final)' : 'Rechazó en aprobación final', x.comSup]);
-  if (x.estadoGuardado === 'cancelado') filas.push([x.decidido, x.solNombre, 'Canceló la propuesta', '']);
+  if (x.estadoGuardado === 'cancelado') filas.push([x.decidido, x.aplicacion ? CONFIG.nombreApp : x.solNombre, x.aplicacion ? 'Se cerró automáticamente' : 'Canceló la propuesta', '']);
+  if (x.estadoGuardado === 'anulado') filas.push([x.decidido, CONFIG.nombreApp, 'Lo anuló: el rol cambió en el Google Sheet', '']);
   const td = 'padding:5px 8px;border:1px solid #E2E0EF;vertical-align:top';
   return '<table style="border-collapse:collapse;font-size:13px">' + filas.map(r => '<tr><td style="' + td + ';white-space:nowrap;color:#6C6893">' + f(r[0]) + '</td><td style="' + td + '"><b>' +
     escHtml_(r[1] || '') + '</b> · ' + escHtml_(r[2]) + (r[3] ? '<br><span style="color:#3D3770">“' + escHtml_(r[3]) + '”</span>' : '') + '</td></tr>').join('') + '</table>';

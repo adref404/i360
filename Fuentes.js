@@ -79,6 +79,9 @@ function guardarRol_(rol, origen) {
     if (ancho > 4 && sh.getRange(1, 5).getValue() === '') sh.getRange(1, 5, 1, ancho - 4).setValues([new Array(ancho - 4).fill('json (continuación)')]);
     sh.getRange(destino, 1).setNumberFormat('@');
     sh.getRange(destino, 1, 1, ancho).setValues([fila]);
+    const marca = String(Date.now()); // la página la consulta para actualizarse sola (ver apiCambios)
+    props_().setProperty('ROLES_CAMBIO', marca);
+    CacheService.getScriptCache().put('ROLES_CAMBIO', marca, 21600);
     return destino;
   });
 }
@@ -218,10 +221,13 @@ function escribirFuente_(f, cambios) {
   return n;
 }
 
-function sincronizarFuente_(f) {
+/** excluirId: intercambio que se está aplicando en este momento (no se anula por el cambio que él mismo hizo). */
+function sincronizarFuente_(f, excluirId) {
   try {
     const r = leerRolDeSheet_(f.id, f.hoja, f.gid, f.mes);
     guardarRol_({ mes: r.mes, fuente: r.fuente, hoja: r.hoja, instructores: r.instructores }, 'Google Sheet');
+    // Los intercambios en curso que ya no coinciden con el rol nuevo se anulan (y se avisa por correo)
+    try { anularDesfasados_(r, excluirId); } catch (e) { console.warn('No se pudieron revisar los intercambios de ' + r.mes + ': ' + e.message); }
     const estado = 'OK' + (r.avisos.length ? ' · ' + r.avisos.join(' ') : '');
     conBloqueo_(() => escribirFuente_(f, { mes: r.mes, ultima: new Date(), estado: estado.slice(0, 500), instructores: r.instructores.length, archivo: r.fuente + ' · ' + r.hoja }));
     return { ok: true, mes: r.mes, instructores: r.instructores.length, archivo: r.fuente, hoja: r.hoja, avisos: r.avisos };
@@ -233,8 +239,14 @@ function sincronizarFuente_(f) {
   }
 }
 
+/** Mes ya terminado: su copia queda congelada y no se vuelve a leer del Google Sheet. */
+const mesCerrado_ = mes => !!mes && mes < mesActual_();
+
+/** Sincroniza los meses vigentes. Un mes cerrado solo se lee si todavía no tiene copia (primera carga). */
 function sincronizarTodo_(soloMes) {
-  return leerFuentes_().filter(f => f.activo && f.id && (!soloMes || f.mes === soloMes)).map(sincronizarFuente_);
+  const conCopia = {}; leerRoles_().forEach(m => { conCopia[m.mes] = true; });
+  return leerFuentes_().filter(f => f.activo && f.id && (!soloMes || f.mes === soloMes) && !(mesCerrado_(f.mes) && conCopia[f.mes]))
+    .map(f => sincronizarFuente_(f));
 }
 
 /* =================== Funciones públicas (coordinación) =================== */
@@ -248,7 +260,9 @@ function apiFuentes(token) {
     let auto = false;
     try { auto = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sincronizacionProgramada'); }
     catch (e) { console.error('apiFuentes: no se pudieron leer los disparadores (ejecuta autorizarPermisos): ' + (e && e.message)); }
-    return { fuentes: leerFuentes_(), meses: meses, automatica: auto };
+    let tiempoReal = 0;
+    try { tiempoReal = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'alCambiarRol').length; } catch (e) { /* sin permiso de disparadores */ }
+    return { fuentes: leerFuentes_(), meses: meses, automatica: auto, tiempoReal: tiempoReal };
   });
 }
 
@@ -271,6 +285,7 @@ function apiAgregarFuente(token, enlace, mes, hoja) {
         instructores: r.instructores.length, archivo: r.fuente + ' · ' + r.hoja
       });
     });
+    refrescarTiempoRealSiAuto_();
     return { mes: r.mes, instructores: r.instructores.length, archivo: r.fuente, hoja: r.hoja, avisos: r.avisos };
   });
 }
@@ -318,6 +333,7 @@ function apiEditarFuente(token, mesActual, enlace, mesNuevo, hoja) {
         if (ocultos.indexOf(mesActual) >= 0) props_().setProperty('MESES_OCULTOS', JSON.stringify(ocultos.filter(m => m !== mesActual).concat([r.mes]).sort()));
       }
     });
+    refrescarTiempoRealSiAuto_();
     registrar_(yo, 'Fuente del rol cambiada', mesActual + (r.mes !== mesActual ? ' → ' + r.mes : '') + ' · ' + r.fuente + ' · ' + r.hoja, '');
     return { mes: r.mes, mesAnterior: mesActual, instructores: r.instructores.length, archivo: r.fuente, hoja: r.hoja, avisos: r.avisos };
   });
@@ -334,8 +350,11 @@ function borrarRol_(mes) {
 function apiSincronizar(token, mes) {
   return responder_(() => {
     sesion_(token, { seccion: 'cargar', nivel: 2 });
-    const res = sincronizarTodo_(mesTxt_(mes));
-    if (!res.length) throw falla_(mes ? 'Ese mes no tiene un Google Sheet activo en la hoja Fuentes.' : 'No hay Google Sheets activos en la hoja Fuentes.');
+    mes = mesTxt_(mes);
+    if (mes && mesCerrado_(mes) && leerRoles_().some(m => m.mes === mes))
+      throw falla_(mesLargoTxt_(mes) + ' ya terminó: su rol queda congelado y no se vuelve a sincronizar.');
+    const res = sincronizarTodo_(mes);
+    if (!res.length) throw falla_(mes ? 'Ese mes no tiene un Google Sheet activo en la hoja Fuentes.' : 'No hay Google Sheets activos del mes actual en adelante.');
     return res;
   });
 }
@@ -346,6 +365,7 @@ function apiActivarFuente(token, mes, activo) {
     const f = leerFuentes_().find(x => x.mes === mesTxt_(mes));
     if (!f) throw falla_('No encontramos ese mes en la hoja Fuentes.');
     conBloqueo_(() => escribirFuente_(f, { activo: !!activo, estado: activo ? f.estado : 'Pausada: se conserva la última copia' }));
+    refrescarTiempoRealSiAuto_();
     return true;
   });
 }
@@ -355,6 +375,7 @@ function apiSincronizacionAutomatica(token, activar) {
     sesion_(token, { seccion: 'cargar', nivel: 2 });
     ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'sincronizacionProgramada').forEach(t => ScriptApp.deleteTrigger(t));
     if (activar) ScriptApp.newTrigger('sincronizacionProgramada').timeBased().everyHours(1).create();
+    actualizarTiempoReal_(!!activar);
     return !!activar;
   });
 }
@@ -365,4 +386,78 @@ function sincronizacionProgramada(e) {
   const valido = ScriptApp.getProjectTriggers().some(t => t.getUniqueId() === String(e.triggerUid));
   if (!valido) return;
   sincronizarTodo_();
+  // Al cambiar de mes, el Sheet del mes que terminó deja de vigilarse y se suma el del mes nuevo
+  try { actualizarTiempoReal_(true); } catch (x) { console.warn('Tiempo real: ' + x.message); }
+}
+
+/* ---------------- Tiempo real ----------------
+   Disparador instalable "al cambiar" (onChange) en cada Google Sheet mensual vigente (mes actual y siguientes):
+   cuando alguien edita, pega, cambia colores o inserta filas, Google avisa al instante y se vuelve a leer ese mes.
+   Se activa junto con la sincronización automática; el disparador horario queda como respaldo (los cambios que
+   llegan por fórmulas o por otros scripts no disparan onChange). Máximo 20 disparadores por usuario y script:
+   por eso solo se vigilan los meses vigentes. */
+
+/** Deja un disparador por cada Google Sheet vigente (o ninguno si activar = false). */
+function actualizarTiempoReal_(activar) {
+  // Se llama desde la app o el disparador horario, donde el Sheet activo sí es el base: se guarda su ID para alCambiarRol
+  if (!CONFIG.baseId) props_().setProperty('BASE_ID', ss_().getId());
+  const faltan = activar ? Array.from(new Set(leerFuentes_().filter(f => f.activo && f.id && f.mes >= mesActual_()).map(f => f.id))) : [];
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'alCambiarRol').forEach(t => {
+    const i = faltan.indexOf(t.getTriggerSourceId());
+    if (i >= 0) faltan.splice(i, 1); else ScriptApp.deleteTrigger(t); // ya no vigente o duplicado
+  });
+  faltan.forEach(id => {
+    try { ScriptApp.newTrigger('alCambiarRol').forSpreadsheet(id).onChange().create(); }
+    catch (e) { console.warn('Tiempo real: no se pudo vigilar el Google Sheet ' + id + ': ' + e.message); }
+  });
+}
+function refrescarTiempoRealSiAuto_() {
+  try { if (ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sincronizacionProgramada')) actualizarTiempoReal_(true); }
+  catch (e) { console.warn('Tiempo real: ' + e.message); }
+}
+
+/**
+ * Disparador "al cambiar" de un Google Sheet mensual. Agrupa ráfagas de ediciones (pegar, varias celdas seguidas):
+ * si ya hay una lectura en curso solo deja la marca, y esa lectura vuelve a leer si hubo cambios mientras leía.
+ */
+function alCambiarRol(e) {
+  if (!e || !e.triggerUid) return;
+  // Aquí SpreadsheetApp.getActive() es el Sheet del mes que cambió, no el base: se abre el base por su ID
+  // (si no, leerFuentes_ buscaría la hoja Fuentes dentro del Sheet del mes)
+  const base = CONFIG.baseId || props_().getProperty('BASE_ID');
+  if (!base) { console.log('Tiempo real: falta el ID del Google Sheet base. Apaga y prende la sincronización automática en Actualizar rol.'); return; }
+  _BASE = SpreadsheetApp.openById(base);
+  // El evento "al cambiar" no siempre trae e.source: el Sheet sale del propio disparador (que además valida que sea real)
+  const disp = ScriptApp.getProjectTriggers().find(t => t.getUniqueId() === String(e.triggerUid));
+  if (!disp) return;
+  const id = disp.getTriggerSourceId(), c = CacheService.getScriptCache(), k = 'RT_' + id;
+  const meses = leerFuentes_().filter(f => f.activo && f.id === id && !mesCerrado_(f.mes)).map(f => f.mes);
+  if (!meses.length) { console.log('Tiempo real: el Google Sheet ' + id + ' no corresponde a un mes vigente activo.'); return; }
+  c.put(k + '_cambio', String(Date.now()), 21600);
+  if (c.get(k + '_leyendo')) { console.log('Tiempo real: ' + meses.join(', ') + ' ya se está leyendo; se tomará este cambio.'); return; }
+  c.put(k + '_leyendo', '1', 300);
+  try {
+    for (let vuelta = 0; vuelta < 4; vuelta++) {
+      Utilities.sleep(2000);
+      const inicio = Date.now();
+      leerFuentes_().filter(f => f.activo && f.id === id && !mesCerrado_(f.mes)).forEach(f => {
+        const r = sincronizarFuente_(f);
+        console.log('Tiempo real: ' + f.mes + (r.ok ? ' actualizado (' + r.instructores + ' instructores)' : ' con error: ' + r.error));
+      });
+      if (Number(c.get(k + '_cambio') || 0) <= inicio) break; // nadie editó mientras se leía
+    }
+  } finally { c.remove(k + '_leyendo'); }
+}
+
+/**
+ * Marca de la última vez que cambió algún rol (solo una hora, sin datos). La página la consulta cada minuto para
+ * actualizarse sola, así que no valida la sesión ni lee hojas: sale de la caché y, si expiró, de las propiedades.
+ */
+function apiCambios() {
+  return responder_(() => {
+    const c = CacheService.getScriptCache();
+    let m = c.get('ROLES_CAMBIO');
+    if (m === null) { m = props_().getProperty('ROLES_CAMBIO') || ''; c.put('ROLES_CAMBIO', m, 21600); }
+    return { roles: m };
+  });
 }

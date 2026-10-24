@@ -6,8 +6,10 @@ async function cargarFuentes(){
   try{ S.fuentes=await api("apiFuentes",S.token); }catch(e){ S.fuentes={error:e.message}; }
   S.fuentesCargando=false; if(S.tab==="cargar") render();
 }
+const mesCerrado = m => !!m && m < mesHoy();   // igual que mesCerrado_ en Fuentes.gs: su copia ya no se vuelve a leer
 function estadoFuente(f){
   if(!f.activo) return `<span class="pill">Pausada</span>`;
+  if(mesCerrado(f.mes) && /^ok/i.test(f.estado)) return `<span class="pill" title="El mes terminó: su rol queda congelado y no se vuelve a sincronizar"><i></i>Mes cerrado</span>`;
   if(/^error/i.test(f.estado)) return `<span class="pill crit"><i></i>Error</span>`;
   if(/^ok/i.test(f.estado)) return `<span class="pill good"><i></i>Sincronizada</span>`;
   return `<span class="pill warn"><i></i>Pendiente</span>`;
@@ -57,15 +59,15 @@ function admCargar(){
     </div>
 
     <div class="card stack" style="gap:12px">
-      <div class="row between"><div><h3>Google Sheets conectados</h3><p class="hint">Cada sincronización guarda una copia del mes en la hoja Roles. Editar el Google Sheet no cambia la app hasta sincronizar.</p></div>
-        <div class="row"><label class="toggle"><input type="checkbox" id="autoSync" ${F.automatica?"checked":""}> Sincronizar cada hora</label><button class="btn" data-act="sincTodo" ${filas.some(f=>f.activo)?"":"disabled"}>Sincronizar todo</button></div></div>
+      <div class="row between"><div><h3>Google Sheets conectados</h3><p class="hint">Cada sincronización guarda una copia del mes en la hoja Roles. ${F.automatica?"Con la sincronización automática, los cambios en el Google Sheet del mes actual y los siguientes se ven en la app en segundos; los meses cerrados no se vuelven a leer.":"<b>Sincronización automática apagada:</b> editar el Google Sheet no cambia la app hasta que sincronices. Préndela para que los cambios se vean en segundos."}</p></div>
+        <div class="row"><label class="toggle" title="Al editar el Google Sheet del mes, la app se actualiza en segundos. Cada hora se sincroniza todo como respaldo."><input type="checkbox" id="autoSync" ${F.automatica?"checked":""}> Sincronización automática${F.automatica?` <span class="hint">(al instante${F.tiempoReal?` · ${F.tiempoReal} Sheet${F.tiempoReal===1?"":"s"} vigilado${F.tiempoReal===1?"":"s"}`:""} + cada hora)</span>`:""}</label><button class="btn" data-act="sincTodo" ${filas.some(f=>f.activo&&!mesCerrado(f.mes))?"":"disabled"} title="Lee los meses vigentes (el actual y los siguientes); los meses cerrados no se tocan">Sincronizar todo</button></div></div>
       ${filas.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Mes</th><th>Archivo</th><th>Estado</th><th>Para instructores</th><th>Última lectura</th><th>Instr.</th><th></th></tr></thead><tbody>
         ${filas.map(f=>`<tr><td><b>${f.mes?mesLargo(f.mes):"—"}</b></td><td>${esc(f.archivo||"Sin leer")}<span class="sm2">${f.hoja?"Hoja "+esc(f.hoja):"Hoja detectada automáticamente"}</span></td>
           <td>${estadoFuente(f)}${f.estado&&!/^ok$/i.test(f.estado)?`<span class="sm2" style="max-width:300px;white-space:normal">${esc(f.estado)}</span>`:""}</td>
           <td>${(()=>{ const m=F.meses.find(x=>x.mes===f.mes); if(!m) return `<span class="sm2">Sin copia</span>`;
             return `${m.oculto?`<span class="pill warn"><i></i>Oculto</span>`:`<span class="pill good"><i></i>Publicado</span>`}<button class="btn sm link-btn" data-ocultar="${esc(f.mes)}" data-vis="${m.oculto?1:0}" title="${m.oculto?"Los instructores podrán ver este mes y proponer intercambios":"Los instructores dejan de ver este mes; coordinación lo sigue viendo"}">${m.oculto?"Publicar":"Ocultar"}</button>`; })()}</td>
           <td>${f.ultima?fechaLarga(f.ultima):"—"}</td><td class="num">${f.instructores||"—"}</td>
-          <td class="acts"><a class="btn sm" href="${esc(f.enlace)}" target="_blank" rel="noopener">Abrir</a> <button class="btn sm" data-fedit="${esc(f.mes)}">Editar</button> ${f.activo?`<button class="btn sm" data-sinc="${esc(f.mes)}">Sincronizar</button> <button class="btn sm" data-pausa="${esc(f.mes)}" data-on="0">Pausar</button>`:`<button class="btn sm" data-pausa="${esc(f.mes)}" data-on="1">Reanudar</button>`}</td></tr>`).join("")}
+          <td class="acts"><a class="btn sm" href="${esc(f.enlace)}" target="_blank" rel="noopener">Abrir</a> <button class="btn sm" data-fedit="${esc(f.mes)}">Editar</button> ${f.activo?`${mesCerrado(f.mes)?"":`<button class="btn sm" data-sinc="${esc(f.mes)}">Sincronizar</button> `}<button class="btn sm" data-pausa="${esc(f.mes)}" data-on="0">Pausar</button>`:`<button class="btn sm" data-pausa="${esc(f.mes)}" data-on="1">Reanudar</button>`}</td></tr>`).join("")}
       </tbody></table></div>`:`<p class="empty">Todavía no hay Google Sheets conectados.</p>`}
     </div>
 

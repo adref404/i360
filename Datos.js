@@ -70,6 +70,7 @@ function apiDatos(token) {
     return {
       usuario: perfil,
       hoy: hoyISO_(),
+      cambioRoles: props_().getProperty('ROLES_CAMBIO') || '',
       meses: meses,
       respuestas: respuestas,
       vigencias: vigencias,

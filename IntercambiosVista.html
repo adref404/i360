@@ -32,6 +32,7 @@ function estadoIntVista(x, yo){
     case "aprobado": return ["good","Aprobado"];
     case "rechazado_supervisor": return ["crit","Rechazado por coordinación"];
     case "cancelado": return ["","Cancelado"];
+    case "anulado": return ["","Anulado: el rol cambió"];
     case "vencido": return ["","Vencido (la fecha pasó)"];
     default: return ["",x.estado];
   }
@@ -41,8 +42,8 @@ const pillInt = (x,yo) => { const [c,t]=estadoIntVista(x,yo); return `<span clas
 /* ¿Hay un cambio que esta persona todavía no vio? (alimenta la campana) */
 function intNoVisto(x, yo){
   const g=x.estadoGuardado;
-  if(x.solBp===yo) return ["en_supervisor","en_jefe","rechazado_receptor","aprobado","rechazado_supervisor","rechazado_jefe"].includes(g) && x.vistoSol!==g;
-  if(x.recBp===yo){ if(g==="pendiente") return x.estado!=="vencido"; return ["aprobado","rechazado_supervisor","rechazado_jefe","cancelado"].includes(g) && x.vistoRec!==g; }
+  if(x.solBp===yo) return ["en_supervisor","en_jefe","rechazado_receptor","aprobado","rechazado_supervisor","rechazado_jefe","anulado"].includes(g) && x.vistoSol!==g;
+  if(x.recBp===yo){ if(g==="pendiente") return x.estado!=="vencido"; return ["aprobado","rechazado_supervisor","rechazado_jefe","cancelado","anulado"].includes(g) && x.vistoRec!==g; }
   return false;
 }
 
@@ -111,7 +112,7 @@ function pintarIntPaso(O){
   const so=document.getElementById("intSolo"); if(so) so.onchange=()=>{ O.soloDia=so.checked; O.com=document.getElementById("intCom").value; pintarIntPaso(O); };
   document.getElementById("intCom").oninput=e=>{ O.com=e.target.value; };
   document.getElementById("intEnviar").onclick=async e=>{ const btn=e.currentTarget; setCargando(btn,true,"Enviando…");
-    try{ const r=await api("apiCrearIntercambio",S.token,O.mes,dias,O.sel,O.com,dispositivo()); S.intercambios=r.intercambios; cerrarPanel(); toast(`Propuesta enviada a ${otro.nombre}`); render(); }
+    try{ const r=await api("apiCrearIntercambio",S.token,O.mes,dias,O.sel,O.com,dispositivo(),{sol:dias.map(k=>yo.celdas[k]||""),rec:dias.map(k=>otro.celdas[k]||"")}); S.intercambios=r.intercambios; cerrarPanel(); toast(`Propuesta enviada a ${otro.nombre}`); render(); }
     catch(x){ setCargando(btn,false); document.getElementById("intErr").textContent=x.message; } };
 }
 
@@ -194,7 +195,7 @@ function pintarPublicarAbierto(O){
   const so=document.getElementById("abSolo"); if(so) so.onchange=()=>{ O.soloDia=so.checked; O.com=document.getElementById("abCom").value; pintarPublicarAbierto(O); };
   document.getElementById("abCom").oninput=e=>{ O.com=e.target.value; };
   document.getElementById("abEnviar").onclick=async e=>{ const btn=e.currentTarget; setCargando(btn,true,"Publicando…");
-    try{ const r=await api("apiPublicarAbierto",S.token,O.mes,dias,O.com,dispositivo()); S.intercambios=r.intercambios; cerrarPanel(); toast("Rol abierto publicado: tus compañeros ya lo pueden ver"); render(); }
+    try{ const r=await api("apiPublicarAbierto",S.token,O.mes,dias,O.com,dispositivo(),dias.map(k=>(O.cel[k]||{}).raw||"")); S.intercambios=r.intercambios; cerrarPanel(); toast("Rol abierto publicado: tus compañeros ya lo pueden ver"); render(); }
     catch(x){ setCargando(btn,false); document.getElementById("abErr").textContent=x.message; } };
 }
 function abrirTomarAbierto(id){
@@ -210,7 +211,7 @@ function abrirTomarAbierto(id){
       <p class="hint">${nom1} hará tu actividad y tú la suya. Al tomarlo pasa directo a revisión de coordinación${hayFinal()?" y luego a aprobación final":""}; el rol cambia recién cuando se aprueba.</p></form>`);
   document.getElementById("abTX").onclick=cerrarPanel;
   document.getElementById("fAbT").onsubmit=async e=>{ e.preventDefault(); const b=document.getElementById("abTBtn"); setCargando(b,true,"…");
-    try{ const r=await api("apiTomarAbierto",S.token,id,document.getElementById("abTCom").value,dispositivo()); S.intercambios=r.intercambios; cerrarPanel(); toast("Lo tomaste: ahora lo revisa coordinación"); render(); }
+    try{ const r=await api("apiTomarAbierto",S.token,id,document.getElementById("abTCom").value,dispositivo(),x.dias.map(d=>(cel[d-1]||{}).raw||"")); S.intercambios=r.intercambios; cerrarPanel(); toast("Lo tomaste: ahora lo revisa coordinación"); render(); }
     catch(err){ setCargando(b,false); const el=document.getElementById("abTErr"); if(el) el.textContent=err.message; } };
 }
 
@@ -265,7 +266,8 @@ function pasosIntHTML(x){
     c=st(g==="aprobado", g==="en_jefe", rj);
     pasos.push({c, t:rj?"Rechazado":c==="ok"?"Aprobado":c==="act"?"En aprobación":"Aprobación", q:x.supervisor, f:x.decidido});
   }
-  // Cancelado o vencido: se marca en la etapa donde quedó
+  // Anulado (el rol cambió en el Google Sheet), cancelado o vencido: se marca en la etapa donde quedó
+  if(g==="anulado"){ const p=pasos.find(p=>!p.c||p.c==="act"); if(p){ p.c="off"; p.t="Anulado (el rol cambió)"; p.q=""; p.f=x.decidido; } }
   if(g==="cancelado"||x.estado==="vencido"){ const p=pasos.find(p=>!p.c); if(p){ p.c="off"; p.t=g==="cancelado"?"Cancelado":"Vencido"; p.q=g==="cancelado"&&!x.aplicacion?x.solNombre:""; p.f=g==="cancelado"?x.decidido:""; } }
   const fecha=iso=>{ const d=new Date(iso); return isNaN(d)?null:[d.toLocaleDateString("es-PE",{day:"numeric",month:"short"}), d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit",hour12:false})]; };
   return `<div class="int-pasos-w"><ol class="int-pasos">${pasos.map(p=>{ const hecho=p.c==="ok"||p.c==="rech"||p.c==="off", f=hecho&&p.f?fecha(p.f):null;
@@ -334,7 +336,7 @@ function notifsIntercambio(){
         t:esAbiertoX(x)?`Tomaste el rol abierto de ${x.solNombre}`:`${x.solNombre} te propone un intercambio`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:e.t, tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
     if(x.solBp===yo && !["pendiente","cancelado","abierto"].includes(x.estadoGuardado)){ const e=est(x);
       out.push({id:"is:"+x.id, k:"int", fecha:x.decidido||x.respondido, pend:intNoVisto(x,yo),
-        t:esAbiertoX(x)?`${x.recNombre} tomó tu rol abierto: ${e.t.toLowerCase()}`:`Tu intercambio con ${x.recNombre}: ${e.t.toLowerCase()}`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:intNoVisto(x,yo)?"Sin ver":"Visto", tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
+        t:esAbiertoX(x)?(x.recBp?`${x.recNombre} tomó tu rol abierto: ${e.t.toLowerCase()}`:`Tu rol abierto: ${e.t.toLowerCase()}`):`Tu intercambio con ${x.recNombre}: ${e.t.toLowerCase()}`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`, est:intNoVisto(x,yo)?"Sin ver":"Visto", tono:e.c==="good"?"good":e.c==="crit"?"crit":"", go}); }
     if(!esAdmin() && x.estado==="abierto" && x.solBp!==yo)
       out.push({id:"io:"+x.id, k:"int", fecha:x.creado, pend:false, t:`${x.solNombre} publicó un rol abierto`, d:`${mesLargo(x.mes)} · ${diasIntTxt(x)}`,
         est:"Disponible", tono:"", go:()=>irANotif("mi","abierto-"+x.id)});
