@@ -168,7 +168,7 @@ function mesInicial(){
 async function recargar(){ STC={}; await cargarDatos(true); }
 
 /* ============ Actualización automática ============
-   Cada 60 s (con la pestaña visible) se pregunta al servidor si cambió algún rol (consulta liviana: no lee hojas). Si cambió, se recargan los datos
+   Cada 30 s (con la pestaña visible) se pregunta al servidor si cambió algún rol (consulta liviana: no lee hojas). Si cambió, se recargan los datos
    sin recargar la página. Se espera si hay un diálogo abierto, algo escrito o una selección sin enviar. */
 let marcaRoles="", ultimaRevision=0;
 async function revisarCambios(){
@@ -183,7 +183,7 @@ async function revisarCambios(){
     await recargar(); toast("El rol se actualizó");
   }catch(e){ /* sin conexión: se reintenta */ }
 }
-setInterval(revisarCambios, 60000);
+setInterval(revisarCambios, 30000);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") revisarCambios(); });
 
 /* ============ Render raíz ============ */
