@@ -3,7 +3,7 @@
  *
  * Coordinación abre una ventana para un mes que todavía se está armando (normalmente el siguiente al rol recién
  * publicado). En ella cada instructor puede pedir un bloque de 4 días libres seguidos que incluya sábado y
- * domingo: de jueves a domingo o de sábado a martes (BLOQUES_DO_). No se puede pedir en un mes en que el
+ * domingo: de jueves a domingo, de viernes a lunes o de sábado a martes (BLOQUES_DO_). No se puede pedir en un mes en que el
  * instructor tiene vacaciones (tomadas, programadas o solicitadas).
  *
  * Como el rol de ese mes todavía no existe en la app, la solicitud se guarda aparte (hoja SolicitudesDO) y
@@ -19,7 +19,7 @@ const ENC_DO_ = ['ID', 'BP', 'Nombre', 'Mes', 'Desde', 'Hasta', 'Bloque', 'Estad
 const CFG_DO_DEF_ = { habilitado: false, mes: '', desde: '', hasta: '', cupo: 0 };
 const DIAS_DO_ = 4;
 // Día de la semana en que puede empezar el bloque (0 = domingo) → nombre. Siempre 4 días seguidos con sábado y domingo.
-const BLOQUES_DO_ = { 4: 'Jueves a domingo', 6: 'Sábado a martes' };
+const BLOQUES_DO_ = { 4: 'Jueves a domingo', 5: 'Viernes a lunes', 6: 'Sábado a martes' };
 
 function hojaDO_() { return asegurarColumnas_(hoja_(CONFIG.hojas.solDO, ENC_DO_), ENC_DO_); }
 
@@ -53,7 +53,7 @@ function bloqueDO_(mes, dia) {
   dia = Number(dia);
   if (!(dia >= 1 && dia + DIAS_DO_ - 1 <= diasDelMes_(mes))) throw falla_('El bloque de ' + DIAS_DO_ + ' días debe quedar completo dentro del mes.');
   const nombre = BLOQUES_DO_[new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)) - 1, dia).getDay()];
-  if (!nombre) throw falla_('El bloque debe ser de jueves a domingo o de sábado a martes.');
+  if (!nombre) throw falla_('El bloque debe incluir sábado y domingo: de jueves a domingo, de viernes a lunes o de sábado a martes.');
   const dias = []; for (let k = 0; k < DIAS_DO_; k++) dias.push(dia + k);
   return { desde: mes + '-' + pad2_(dia), hasta: mes + '-' + pad2_(dia + DIAS_DO_ - 1), dias: dias, bloque: nombre };
 }
