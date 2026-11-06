@@ -13,9 +13,10 @@
  *   SemillaVacaciones.gs Datos iniciales de vacaciones (Vacaciones_INSTRUCTORES_1.xlsx)
  *   Intercambios.gs      Intercambio de actividades entre instructores y meses ocultos a instructores
  *   BloqueDO.gs          Solicitud de bloque de 4 días libres (DO) para el mes que se está armando
+ *   CampanaVac.gs        Campaña de vacaciones por prioridades P1–P6 (nov-2026 a dic-2027) y asignación por rondas
  *   Perfiles.gs          Perfiles de acceso de coordinación (Sin acceso / Ver / Gestionar por sección)
  *   Colores.gs           Catálogo de tipos de actividad y colores (TiposActividad); repintar meses
- *   Index, Estilos, Clasificador, App, VacacionesVista, IntercambiosVista, BloqueDOVista, Vistas, Coordinacion, Admin (HTML)   Interfaz
+ *   Index, Estilos, Clasificador, App, VacacionesVista, IntercambiosVista, BloqueDOVista, CampanaVacVista, Vistas, Coordinacion, Admin (HTML)   Interfaz
  */
 
 const CONFIG = {
@@ -57,6 +58,8 @@ const CONFIG = {
     solVac: 'SolicitudesVacaciones',
     intercambios: 'Intercambios',
     solDO: 'SolicitudesDO',
+    vacMinimos: 'VacacionesMinimos',
+    vacPrioridades: 'VacacionesPrioridades',
     tipos: 'TiposActividad',
     perfiles: 'Perfiles'
   },
@@ -112,7 +115,7 @@ const CONFIG = {
 
 // Versión de la app: es lo único que hay que cambiar (se muestra en el inicio de sesión, la pantalla de carga y el diagnóstico).
 const VERSION_APP = '2.5';
-const ARCHIVOS_HTML_ = ['Estilos', 'FuentesLatam', 'Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'BloqueDOVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'];
+const ARCHIVOS_HTML_ = ['Estilos', 'FuentesLatam', 'Clasificador', 'App', 'VacacionesVista', 'IntercambiosVista', 'BloqueDOVista', 'CampanaVacVista', 'ColoresVista', 'Vistas', 'Coordinacion', 'Admin'];
 
 function doGet(e) {
   // https://…/exec?diag=1  ->  diagnóstico en texto (sin datos personales)

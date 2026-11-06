@@ -68,11 +68,14 @@ function rangosISO(list){
 /* ============ Estado de la ventana y de las solicitudes ============ */
 const CFG_DEF = {habilitado:false, desde:"", hasta:"", mesDesde:"2027-01", mesHasta:"2027-12"};
 function cfgVac(){ return {...CFG_DEF, ...(VAC().cfg||{})}; }
-function ventanaAbierta(){ const c=cfgVac(), h=isoD(HOY); return !!c.habilitado && (!c.desde||h>=c.desde) && (!c.hasta||h<=c.hasta); }
+// Mientras la campaña por prioridades (CampanaVacVista) esté abierta, la solicitud de días sueltos queda apagada
+// La solicitud de días sueltos ya no existe: las vacaciones se piden por prioridades (CampanaVacVista, "Solicitar vacaciones")
+function ventanaAbierta(){ return false; }
 function esPropio(bp, desdeAdmin){ return !desdeAdmin && S.usuario && S.usuario.rol==="inst" && S.usuario.bp===bp; }
 function puedeSeleccionar(bp, mes, desdeAdmin){ const c=cfgVac(); return esPropio(bp,desdeAdmin) && ventanaAbierta() && mes>=c.mesDesde && mes<=c.mesHasta && mes>=mesHoy(); }
 function solicitudesDe(bp){ return (VAC().solicitudes||[]).filter(s=>s.bp===bp).sort((a,b)=>String(b.at).localeCompare(String(a.at))); }
-function extraDe(bp){ const aprob=new Set(), pend=new Set(); solicitudesDe(bp).forEach(s=>{ (s.dias||[]).forEach(k=>{ if(s.estado==="aprobada") aprob.add(k); else if(s.estado==="pendiente") pend.add(k); }); }); return {aprob,pend}; }
+// Solo las solicitudes antiguas aprobadas cuentan (como programadas); las pendientes de ese flujo ya no ocupan días
+function extraDe(bp){ const aprob=new Set(), pend=new Set(); solicitudesDe(bp).forEach(s=>{ if(s.estado==="aprobada") (s.dias||[]).forEach(k=>aprob.add(k)); }); return {aprob,pend}; }
 function estadoVac(vp,k,ex){ if(vp&&vp.fechas.has(k)) return k<=isoD(HOY)?"tom":"prog"; if(ex.aprob.has(k)) return k<=isoD(HOY)?"tom":"prog"; if(ex.pend.has(k)) return "sol"; return null; }
 /* Meses que puede recorrer un instructor: desde 2024 hasta diciembre del próximo año, más los meses con rol */
 function mesesUsuario(){ const out=new Set(MO.orden); const yMax=HOY.getFullYear()+1; for(let y=2024;y<=yMax;y++) for(let m=1;m<=12;m++) out.add(y+"-"+String(m).padStart(2,"0")); return [...out].sort(); }
@@ -139,45 +142,15 @@ function calHTML(bp, mes, desdeAdmin){
   return {tiles:tiles.join(""), strip, sel, sinF, conRol:!!p};
 }
 
-/* ============ Panel de selección y validación ============ */
-function selPanelHTML(bp){
-  const vp=vacPersona(bp); if(!vp) return "";
-  const ex=extraDe(bp); const sel=[...S.selVac].sort();
-  const c=cfgVac();
-  if(!sel.length) return `<div class="selpanel empty"><b>Toca los días que quieres pedir</b><span class="hint">Puedes elegir días libres entre ${mesLargo(c.mesDesde)} y ${mesLargo(c.mesHasta)}. Usa las flechas del mes para avanzar.</span></div>`;
-  const porY={}; sel.forEach(k=>{ const Y=anioDeFecha(vp,parseISO(k)); (porY[Y]=porY[Y]||[]).push(k); });
-  let ok=true;
-  const filas=Object.keys(porY).map(Number).sort().map(Y=>{ const p=periodoVac(vp,Y,HOY,ex); const disp=p.der-p.tom-p.prog-p.sol; const n=porY[Y].length; const q=disp-n; if(q<0) ok=false;
-    return `<div class="selrow"><div class="row between"><span><b>Periodo ${p.etiqueta}</b> <span class="hint">· máximo ${p.der} días</span></span><span class="num ${q<0?"neg":""}">${disp} disponibles → <b>${q<0?`excede en ${-q}`:`quedan ${q}`}</b></span></div>
-      <div class="vbar"><span class="vt" style="flex:${p.tom}"></span><span class="vp" style="flex:${p.prog+p.sol}"></span><span class="vn ${q<0?"bad":""}" style="flex:${n}"></span><span class="vl" style="flex:${Math.max(0,q)}"></span></div></div>`; }).join("");
-  return `<div class="selpanel ${ok?"":"err"}"><div class="row between"><div><span class="eyebrow">Tu solicitud</span><div class="selnum"><b class="num">${sel.length}</b> ${sel.length===1?"día":"días"}</div><span class="hint">${esc(rangoTxt(sel))}</span></div>
-    <div class="row"><button class="btn sm" data-selclear="1">Limpiar</button><button class="btn primary" data-selsend="1" ${ok?"":"disabled"}>Enviar solicitud</button></div></div>
-    ${filas}${ok?"":`<p class="err" style="margin:0">Estás pidiendo más días de los que te quedan en ese periodo. Quita días para poder enviar.</p>`}
-    <div class="field"><label for="selCom">Comentario para coordinación <span class="hint">(opcional)</span></label><textarea class="input" id="selCom" maxlength="500" rows="2" placeholder="Ej.: viaje familiar ya pagado, puedo mover un día si hace falta.">${esc(S.selCom||"")}</textarea></div></div>`;
-}
-function solicitudCardHTML(bp, mes, desdeAdmin, selActiva){
-  const vp=vacPersona(bp); if(!vp) return "";
-  const c=cfgVac(), ab=ventanaAbierta(), propio=esPropio(bp,desdeAdmin);
-  const l=solicitudesDe(bp);
-  const lista=l.length?`<div class="fl">${l.map(s=>`<div class="fl-i solv" id="misol-${esc(s.id)}" style="grid-template-columns:1fr auto;cursor:default"><span><span class="t">${plural(s.n||(s.dias||[]).length,"día")}</span><br><span class="m">${esc(rangoTxt(s.dias))}</span>${s.decididoPor&&s.estado!=="pendiente"?`<br><span class="m">${esc(ESTADO_SOL[s.estado]?ESTADO_SOL[s.estado][1]:s.estado)} por ${esc(s.decididoPor)} · ${fechaCorta(s.decididoAt)}</span>`:""}
-      ${conversacionSol(s, propio?"inst":"ver")}</span><span class="row" style="gap:6px">${pillSol(s)}${propio&&s.estado==="pendiente"?`<button class="btn sm" data-cancelsol="${esc(s.id)}">Cancelar</button>`:""}</span></div>`).join("")}</div>`:"";
-  let cuerpo;
-  if(!ab) cuerpo=`<p class="hint">La solicitud no está habilitada.${propio?" Puedes avanzar a los meses siguientes para revisar tus vacaciones, pero aún no puedes elegir días.":""}</p>`;
-  else if(!propio) cuerpo=`<p class="hint">Ventana abierta hasta ${c.hasta?fmtL(parseISO(c.hasta)):"nuevo aviso"} para días de ${mesLargo(c.mesDesde)} a ${mesLargo(c.mesHasta)}.</p>`;
-  else if(selActiva) cuerpo=selPanelHTML(bp);
-  else cuerpo=`<p class="hint">Ventana abierta${c.hasta?` hasta el ${fmtL(parseISO(c.hasta))}`:""}. Ve a un mes entre ${mesLargo(c.mesDesde)} y ${mesLargo(c.mesHasta)} sin rol publicado y toca los días en el calendario.</p><div><button class="btn primary sm" data-irsol="1">Ir a ${mesLargo(c.mesDesde>mesHoy()?c.mesDesde:mesHoy())}</button></div>${S.selVac.size?`<p class="hint">Tienes ${plural(S.selVac.size,"día")} elegidos sin enviar.</p>`:""}`;
-  return `<div class="card stack" style="gap:10px;${ab?"border-color:color-mix(in srgb,var(--good) 45%,var(--line))":""}"><div class="row between"><h3>Solicitar vacaciones</h3><span class="pill ${ab?"good":""}"><i></i>${ab?"Habilitada":"No habilitada"}</span></div>
-    ${cuerpo}${lista?`<div><span class="eyebrow">${propio?"Tus solicitudes":"Sus solicitudes"}</span>${lista}</div>`:""}</div>`;
-}
-
 /* ============ Historial desde 2024 ============ */
 function vacHistHTML(bp){
   const vp=vacPersona(bp); if(!vp) return "";
   const ex=extraDe(bp); const Yv=anioVig(vp,HOY);
-  const ys=[]; for(let Y=2024; Y<=Yv; Y++) ys.push(Y);
+  const ys=[]; for(let Y=2024; Y<Yv; Y++) ys.push(Y);   // solo periodos ya cerrados: el vigente no se muestra
+  if(!ys.length) return "";
   const rows=ys.slice().reverse().map(Y=>{ const p=periodoVac(vp,Y,HOY,ex); const usados=p.tom+p.prog;
     const rgs=rangosISO(p.dTom.concat(p.dProg).filter(k=>k>="2024-01-01"));
-    return `<details class="vh" ${Y===Yv?"open":""}><summary><span class="vh-l"><b>${p.etiqueta}</b>${Y===Yv?` <span class="pill acc" style="padding:0 7px;font-size:10.5px">Vigente</span>`:""}<small>${fmtC(p.ini)} ${p.ini.getFullYear()} → ${fmtC(p.fin)} ${p.fin.getFullYear()}</small></span>
+    return `<details class="vh" ${Y===Yv-1?"open":""}><summary><span class="vh-l"><b>${p.etiqueta}</b><small>${fmtC(p.ini)} ${p.ini.getFullYear()} → ${fmtC(p.fin)} ${p.fin.getFullYear()}</small></span>
       <span class="vh-b">${vbar(p,false)}</span><span class="vh-n num">${usados}<small>/${p.der}${p.estimado?"*":""}</small></span></summary>
       <div class="fl">${rgs.length?rgs.map(x=>`<div class="fl-i" style="grid-template-columns:1fr auto;cursor:default"><span class="t">${fmtC(x.desde)}${x.n>1?` al ${fmtC(x.hasta)}`:""} ${x.desde.getFullYear()}</span><span class="row" style="gap:6px"><b class="num">${plural(x.n,"día")}</b><span class="pill ${x.desde>HOY?"info":"good"}">${x.desde>HOY?"Programadas":"Tomadas"}</span></span></div>`).join(""):`<p class="empty">Sin vacaciones registradas en este periodo.</p>`}
       ${p.sinF?`<p class="hint" style="padding-top:6px">${p.sinF} días programados en ${vp.sinFecha.map(s=>mesInfo(s.mes).nombre).join(" y ")} sin fecha exacta en la hoja.</p>`:""}</div></details>`; }).join("");
@@ -209,12 +182,12 @@ function vacEquipoHTML(titulo){
    Cuatro preguntas: quién vence (M-2), cuándo se concentran, dónde hay exceso sobre el cupo y quién tiene prioridad.
    Las solicitudes de ejemplo (S.vacSim) viven solo en este navegador: no se envían al servidor ni se mezclan con las reales. */
 const MESES_CV = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
-const cupoVac = () => Math.max(1, Number(cfgVac().cupo)||3);
+const cupoVac = () => Math.max(1, Number((CAMP().cfg||{}).cupo)||Number(cfgVac().cupo)||3);
 const nombreVacDe = bp => (MO.personas[bp]||{}).nombre || bp;
 const cortoNom = n => { const p=String(n).split(" "); return p[0]+(p[1]?" "+p[1][0]+".":""); };
 const rosterVac = () => vacEquipo().filter(r=>r.vp).map(r=>r.pe);
 const solsDash = () => (VAC().solicitudes||[]).filter(s=>s.estado!=="cancelada").concat(S.vacSim||[]);
-function extraDash(bp){ const aprob=new Set(), pend=new Set(); solsDash().filter(s=>s.bp===bp).forEach(s=>(s.dias||[]).forEach(k=>{ if(s.estado==="aprobada") aprob.add(k); else if(s.estado==="pendiente") pend.add(k); })); return {aprob,pend}; }
+function extraDash(bp){ const aprob=new Set(), pend=new Set(); solsDash().filter(s=>s.bp===bp&&s.estado==="aprobada").forEach(s=>(s.dias||[]).forEach(k=>aprob.add(k))); return {aprob,pend}; }
 const irInstructorVac = bp => { if(!puede("inst")) return; S.verBp=bp; S.tab="inst"; S.mes=mesHoy(); render(); scrollTo(0,0); };
 
 /* ---------- Escalafón y trimestre ---------- */
@@ -361,67 +334,21 @@ function tableroVac(){
     <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Quiénes tomaron más y menos días en ${yr}</h3><p>Días tomados y programados en el año calendario. La línea marca el promedio (${f1(avgP)}). Cada periodo DGAC empieza en una fecha distinta: compáralo con el saldo de su periodo.</p></div></div>${rank}</div>
   </section>`;
 
-  // 3 · ciclo de solicitud
-  const nP=sols.filter(s=>s.estado==="pendiente").length, nA=sols.filter(s=>s.estado==="aprobada").length, nR=sols.filter(s=>s.estado==="rechazada").length, nT=sols.length;
-  const yS=Number(c.mesDesde.slice(0,4));
-  const rango=[]; { let y=Number(c.mesDesde.slice(0,4)), m=Number(c.mesDesde.slice(5)); const [y2,m2b]=c.mesHasta.split("-").map(Number); while((y<y2||(y===y2&&m<=m2b)) && rango.length<24){ rango.push(`${y}-${String(m).padStart(2,"0")}`); if(++m>12){ m=1; y++; } } }
-  const solMes=rango.map(ms=>{ const ps=new Set(), pa=new Set(); let dSol=0, pico=0; const [y,m]=ms.split("-").map(Number); const nd=new Date(y,m,0).getDate();
-    for(let d=1; d<=nd; d++){ const cc=M[isoD(new Date(y,m-1,d))]; if(!cc) continue; cc.sol.forEach(b=>ps.add(b)); cc.prog.forEach(b=>pa.add(b)); dSol+=cc.sol.size; pico=Math.max(pico,ocup(cc)+cc.sol.size); }
-    return {ms,ps:ps.size,pa:pa.size,dSol,pico}; });
-  const maxS=Math.max(1,...solMes.map(x=>x.ps+x.pa));
-  const chartSol=barrasMesVac(solMes.map(x=>({lab:MESES_CV[Number(x.ms.slice(5))-1],total:x.ps+x.pa,segs:[["var(--c-vac)",x.pa],["",x.ps,"vs"]],tip:`<b>${mesLargo(x.ms)}</b><br>${x.ps} personas solicitando · ${x.pa} ya programadas<br>${x.dSol} días solicitados<br>Pico del mes: ${x.pico} a la vez${x.pico>cupo?" (sobre el cupo)":""}`,click:()=>{ S.vacAnio=Number(x.ms.slice(0,4)); render(); const el=document.getElementById("vq2"); if(el) el.scrollIntoView({behavior:"smooth"}); }})),maxS);
-  const conf=conflictos(M,cupo);
-  const rangoVacio=!solMes.some(x=>x.ps+x.pa);
-  const vacioRango=`<div class="note">Aún no hay vacaciones programadas ni solicitudes pendientes entre ${mesLargo(c.mesDesde)} y ${mesLargo(c.mesHasta)}${nR?" (las rechazadas no ocupan cupo)":""}. Los gráficos se llenan cuando coordinación programe días o los instructores envíen solicitudes.</div>`;
-  const hayReales=(VAC().solicitudes||[]).some(s=>s.estado!=="cancelada");
-  const sec3=`<section class="card stack" id="vq3"><div class="row between"><div><span class="eyebrow">3 · ¿Dónde hay exceso de solicitudes?</span><h2>Ciclo de solicitud</h2></div>
-      <div class="row"><span class="pill ${ab?"good":""}"><i></i>${ab?"Ventana abierta":"Ventana cerrada"}</span><span class="pill">Cupo ${cupo} por día</span>${sim?`<button class="btn sm" data-vsim="0">Quitar ejemplo</button>`:!hayReales?`<button class="btn sm" data-vsim="1">Ver con solicitudes de ejemplo</button>`:""}</div></div>
-    ${sim?`<div class="note"><b>Datos de ejemplo.</b> Estás viendo solicitudes simuladas para ver cómo se comporta el tablero durante un ciclo. Solo existen en este navegador: no se guardan, no las ve nadie más y desaparecen al recargar.</div>`:""}
-    <div class="vstatus">
-      <div class="vst"><span class="l">Solicitudes</span><b class="num">${nT}</b><span class="s">${plural(new Set(sols.map(s=>s.bp)).size,"instructor","instructores")}</span></div>
-      <div class="vst" style="border-left-color:var(--warn)"><span class="l">Pendientes</span><b class="num">${nP}</b><span class="s">por decidir</span></div>
-      <div class="vst" style="border-left-color:var(--good)"><span class="l">Aprobadas</span><b class="num">${nA}</b><span class="s">${nT?pct(nA/nT):"—"}</span></div>
-      <div class="vst" style="border-left-color:var(--crit)"><span class="l">Rechazadas</span><b class="num">${nR}</b><span class="s">${nT?pct(nR/nT):"—"}</span></div>
-      <div class="vst" style="border-left-color:var(--sem5)"><span class="l">Ventanas sobre cupo</span><b class="num">${conf.length}</b><span class="s">${conf.reduce((a,w)=>a+w.dias.length,0)} días en conflicto</span></div>
-    </div>
-    <div class="meter" style="height:10px">${nA?`<span style="flex:${nA};background:var(--good)"></span>`:""}${nP?`<span style="flex:${nP};background:var(--warn)"></span>`:""}${nR?`<span style="flex:${nR};background:var(--crit)"></span>`:""}${!nT?`<span style="flex:1;background:var(--line-2)"></span>`:""}</div>
-    <div class="grid2e">
-      <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Personas por mes</h3><p>Rango habilitado: ${mesLargo(c.mesDesde)} a ${mesLargo(c.mesHasta)}. El cupo y el rango se cambian en “Ventana de solicitud de vacaciones”.</p></div><div class="legend"><span><i class="sw" style="background:var(--c-vac)"></i>Ya programadas</span><span><i class="sw vs-sw"></i>Solicitando</span></div></div>${rangoVacio?vacioRango:chartSol}</div>
-      <div><div class="chart-title" style="margin-bottom:8px"><div><h3>Demanda día a día ${yS}</h3><p>Programadas más solicitadas, frente al cupo de ${cupo}. El borde marca días con solicitudes.</p></div></div>${rangoVacio?`<p class="empty">Sin días programados ni solicitados en ${yS}.</p>`:calorAnual(M,yS,cupo)}</div>
-    </div></section>`;
-
-  // 4 · prioridad
-  const pendPorBp={}; sols.filter(s=>s.estado==="pendiente").forEach(s=>(pendPorBp[s.bp]=pendPorBp[s.bp]||[]).push(s));
-  const botones=s=>!s?"":s.sim?`<span class="row" style="gap:6px"><button class="btn sm primary" data-simdec="${esc(s.id)}|aprobada">Aprobar</button><button class="btn sm" data-simdec="${esc(s.id)}|rechazada">Rechazar</button></span>`
-    : esAdmin()?`<span class="row" style="gap:6px"><button class="btn sm primary" data-aprobar="${esc(s.id)}">Aprobar</button><button class="btn sm" data-rechazar="${esc(s.id)}">Rechazar</button></span>`:"";
-  const confHTML=conf.map(w=>{ const ranked=w.solicitantes.map(bp=>E.map[bp]||{bp,nombre:nombreVacDe(bp),n:999}).sort((a,b)=>a.n-b.n);
-    return `<div class="vconf"><div class="row between"><div><b>${fmtC(w.desde)}${w.dias.length>1?` – ${fmtC(w.hasta)}`:""} ${w.hasta.getFullYear()}</b> <span class="hint">· ${plural(w.dias.length,"día")} · hasta ${w.maxDem} personas para un cupo de ${cupo}</span></div><span class="pill ${w.libres?"warn":"crit"}">${w.libres?plural(w.libres,"cupo libre","cupos libres"):"Sin cupo libre"}</span></div>
-      <ol class="vprio">${ranked.map((r,i)=>{ const dentro=i<w.libres; const s=(pendPorBp[r.bp]||[]).find(s=>s.dias.some(k=>w.dias.includes(k)));
-        const porque=i>0?`Después de ${cortoNom(ranked[i-1].nombre)}: ${motivoPrioridad(ranked[i-1],r)}`:(ranked[1]?`Antes que ${cortoNom(ranked[1].nombre)}: ${motivoPrioridad(r,ranked[1])}`:"Única solicitud en esta ventana");
-        return `<li class="${dentro?"in":"out"}"><span class="vp-n">${i+1}</span><span class="vp-b"><b>${esc(r.nombre)}</b><span class="hint">${r.anio?`Escalafón #${r.n} · ${r.anio} · T${r.trim}${r.manual?" (cargado)":""}`:"Sin escalafón registrado"} · ${esc(porque)}</span></span>
-          <span class="pill ${dentro?"good":"crit"}">${dentro?"Dentro del cupo":"Fuera del cupo"}</span>${botones(s)}</li>`; }).join("")}</ol></div>`; }).join("");
-  const pendSin=sols.filter(s=>s.estado==="pendiente" && !conf.some(w=>s.dias.some(k=>w.dias.includes(k))));
+  // 3 · escalafón: ordena las rondas de la solicitud de vacaciones (Prioridad 1 de todos, luego la 2…)
   const hayOv=Object.keys(VAC().escalafon||{}).length>0;
   const escList=`<div class="vesc">${E.rows.map(r=>`<div class="vesc-r" data-tip="${esc(`<b>${r.nombre}</b><br>${r.fecha?"Fecha DGAC original "+fmtL(r.fecha):"Sin fecha DGAC original"}`)}"><span class="vp-n sm">${r.n}</span><span class="vesc-n">${esc(r.nombre)}</span><span class="hint num">${r.anio||"—"}${r.trim?" · T"+r.trim:""}${r.manual?" ✎":""}</span></div>`).join("")}</div>`;
-  const sec4=`<section class="card stack" id="vq4"><div class="chart-title" style="margin:0"><div><span class="eyebrow">4 · ¿Quién tiene prioridad y por qué?</span><h2>Priorización de solicitudes</h2><p>Cuando una ventana de días supera el cupo, las solicitudes se ordenan por escalafón y, dentro del mismo escalafón, por trimestre. Los primeros hasta completar el cupo quedan dentro; el resto, fuera. La decisión final es de coordinación.</p></div>
+  const sec4=`<section class="card stack" id="vq4"><div class="row between" style="align-items:flex-start"><div><span class="eyebrow">4 · ¿Quién tiene prioridad y por qué?</span><h2>Orden de escalafón</h2>
+      <p class="hint" style="margin-top:4px">La solicitud de vacaciones se asigna por rondas: primero la Prioridad 1 de todos en este orden, luego la Prioridad 2, y así hasta la 6. Si algún día del bloque ya tiene ${cupo} instructores de vacaciones (cupo), ese bloque no se asigna y la persona sigue con su siguiente prioridad. ${hayOv?"Incluye valores cargados por coordinación (✎).":"Calculado desde la Fecha DGAC original: año = escalafón, trimestre = desempate. Cárgalo oficial con “Editar escalafón”."}</p></div>
       ${esAdmin()?`<button class="btn sm" data-escedit="1">Editar escalafón</button>`:""}</div>
-    <div class="grid2" style="align-items:start">
-      <div class="stack" style="gap:12px">${conf.length?confHTML:`<div class="note">No hay ventanas sobre el cupo${nP?"; las solicitudes pendientes caben en el cupo":""}.</div>`}
-        ${pendSin.length?`<p class="hint">${plural(pendSin.length,"solicitud pendiente","solicitudes pendientes")} sin conflicto de cupo: se deciden en “Solicitudes por revisar”.</p>`:""}</div>
-      <div><span class="eyebrow">Orden de escalafón</span><p class="hint" style="margin:4px 0 8px">${hayOv?"Incluye valores cargados por coordinación (✎).":"Calculado desde la Fecha DGAC original de la hoja Vacaciones: año = escalafón, trimestre de esa fecha = desempate. Cárgalo oficial con “Editar escalafón”."}</p>${escList}</div>
-    </div></section>`;
+    ${escList}</section>`;
 
+  const CA=CAMP(), bpsMin=Object.keys(CA.minimos||{}), nEnv=bpsMin.filter(bp=>misPrios(bp).length).length;
   const resumen=`<div class="vqs">
     <button class="vq ${m2.some(v=>v.niv==="alta")?"bad":m2.length?"mid":"ok"}" data-vgo="vq1"><span class="vq-n">1</span><span><small>¿Quién vence?</small><b>${m2.length} en M-2</b><em>${m2.filter(v=>v.niv==="alta").length} de prioridad alta</em></span></button>
     <button class="vq" data-vgo="vq2"><span class="vq-n">2</span><span><small>¿Cuándo se concentran?</small><b>${picoM?cap(MESES_N[picoM.m]):"—"} ${yr}</b><em>${picoM?picoM.pers:0} instructores · ${diasSobre} días sobre cupo</em></span></button>
-    <button class="vq ${conf.length?"bad":"ok"}" data-vgo="vq3"><span class="vq-n">3</span><span><small>¿Dónde hay exceso?</small><b>${plural(conf.length,"ventana")}</b><em>${nP} solicitudes pendientes</em></span></button>
-    <button class="vq" data-vgo="vq4"><span class="vq-n">4</span><span><small>¿Quién tiene prioridad?</small><b>${conf.reduce((a,w)=>a+w.solicitantes.length,0)} por priorizar</b><em>escalafón y trimestre</em></span></button></div>`;
-  /* Prioridad de una solicitud: escalafón y, si cae en una ventana sobre el cupo, su lugar en ella */
-  const prio=s=>{ const r=E.map[s.bp]; const w=conf.find(w=>(s.dias||[]).some(k=>w.dias.includes(k)));
-    if(!w) return {n:r?r.n:null, anio:r&&r.anio, trim:r&&r.trim, ventana:null};
-    const ranked=w.solicitantes.map(bp=>E.map[bp]||{bp,n:999}).sort((a,b)=>a.n-b.n); const i=ranked.findIndex(x=>x.bp===s.bp);
-    return {n:r?r.n:null, anio:r&&r.anio, trim:r&&r.trim, ventana:`${fmtC(w.desde)}${w.dias.length>1?"–"+fmtC(w.hasta):""}`, lugar:i+1, de:ranked.length, dentro:i<w.libres}; };
-  return {resumen, secciones: sec1+sec2+sec3+sec4, prio};
+    <button class="vq ${CA.abierta?"mid":"ok"}" data-vgo="vcamp"><span class="vq-n">3</span><span><small>¿Quién ya pidió?</small><b>${nEnv} de ${bpsMin.length}</b><em>Solicitud ${CA.abierta?"abierta":"cerrada"}</em></span></button>
+    <button class="vq" data-vgo="vq4"><span class="vq-n">4</span><span><small>¿Quién tiene prioridad?</small><b>Escalafón</b><em>orden de las rondas</em></span></button></div>`;
+  return {resumen, secciones: sec1+sec2+sec4};
 }
 
 function abrirEditorEscalafon(){
@@ -448,48 +375,14 @@ function wireTableroVac(){
 
 /* ============ Pestaña Vacaciones (coordinación) ============ */
 function admVac(){
-  const c=cfgVac(); const ab=ventanaAbierta(); const vu=VAC().ventanaUltima;
-  const sols=(VAC().solicitudes||[]).slice().sort((a,b)=>String(b.at).localeCompare(String(a.at)));
   const T=tableroVac();
-  const pend=sols.filter(s=>s.estado==="pendiente"), revs=sols.filter(revisionPendiente), dec=sols.filter(s=>s.estado!=="pendiente"&&!revisionPendiente(s)).slice(0,12);
-  const prioOrd=s=>{ const p=T.prio(s); return p.ventana?(p.dentro?0:1)*1000+p.lugar:2000+(p.n||999); };
-  pend.sort((a,b)=>prioOrd(a)-prioOrd(b));
-  const prioHTML=s=>{ const p=T.prio(s); const esc1=p.n?`<span class="pill">Escalafón #${p.n}${p.anio?` · ${p.anio} T${p.trim}`:""}</span>`:"";
-    return p.ventana?`<div class="row" style="gap:6px">${esc1}<span class="pill ${p.dentro?"good":"crit"}">${p.dentro?"Dentro del cupo":"Fuera del cupo"} · ${p.lugar}.º de ${p.de} (${esc(p.ventana)})</span></div>`
-      : esc1?`<div class="row" style="gap:6px">${esc1}<span class="pill good">Sin conflicto de cupo</span></div>`:""; };
-  const solRow=(s,acc)=>{ const pe=MO.personas[s.bp]; const vp=vacPersona(s.bp);
-    let val=""; if(vp){ const ex=extraDe(s.bp); const porY={}; (s.dias||[]).forEach(k=>{ const Y=anioDeFecha(vp,parseISO(k)); porY[Y]=(porY[Y]||0)+1; });
-      val=Object.keys(porY).map(Number).map(Y=>{ const p=periodoVac(vp,Y,HOY,ex); const disp=p.der-p.tom-p.prog-(s.estado==="pendiente"?p.sol-porY[Y]:p.sol); return `Periodo ${p.etiqueta}: ${porY[Y]} de ${disp} disponibles`; }).join(" · "); }
-    return `<div class="obs-item solv" id="sol-${esc(s.id)}"><div class="h"><b>${esc(pe?pe.nombre:(s.nombre||s.bp))}</b>${pillSol(s)}</div>
-      <p><b class="num">${plural(s.n||(s.dias||[]).length,"día")}</b> · ${esc(rangoTxt(s.dias))}</p><span class="hint">${esc(val)}${val?" · ":""}enviada ${fechaCorta(s.at)}${s.decididoPor&&!acc?` · ${esc(ESTADO_SOL[s.estado]?ESTADO_SOL[s.estado][1].toLowerCase():s.estado)} por ${esc(s.decididoPor)}`:""}</span>
-      ${acc?prioHTML(s):""}
-      ${conversacionSol(s,"admin")}
-      ${acc?`<div class="row"><button class="btn sm primary" data-aprobar="${esc(s.id)}">Aprobar</button><button class="btn sm" data-rechazar="${esc(s.id)}">Rechazar</button></div>`:""}</div>`; };
   return `<div class="stack">
     ${T.resumen}
-    <div class="grid2e">
-      <div class="card stack" style="gap:12px">
-        <div class="row between"><h3>Ventana de solicitud de vacaciones</h3><span class="pill ${ab?"good":""}"><i></i>${ab?"Habilitada":"No habilitada"}</span></div>
-        <p class="hint">Mientras esté habilitada, cada instructor puede elegir días en su calendario (en meses sin rol publicado) y enviarlos. El servidor valida que no pida más días de los que le quedan en su periodo. Fuera de la ventana solo pueden ver los meses futuros.</p>
-        <form id="fCfg" class="stack" style="gap:10px" novalidate>
-          <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="cfgOn" ${c.habilitado?"checked":""}> Habilitar solicitudes</label>
-          <div class="grid2e" style="gap:10px"><div class="field"><label for="cfgDesde">Abierta desde</label><input class="input" type="date" id="cfgDesde" value="${esc(c.desde)}"></div><div class="field"><label for="cfgHasta">Abierta hasta</label><input class="input" type="date" id="cfgHasta" value="${esc(c.hasta)}"></div></div>
-          <div class="grid2e" style="gap:10px"><div class="field"><label for="cfgMD">Se pueden pedir días desde</label><input class="input" type="month" id="cfgMD" value="${esc(c.mesDesde)}"></div><div class="field"><label for="cfgMH">Hasta</label><input class="input" type="month" id="cfgMH" value="${esc(c.mesHasta)}"></div></div>
-          <div class="field" style="max-width:220px"><label for="cfgCupo">Cupo por día (instructores a la vez)</label><input class="input" type="number" min="1" max="20" id="cfgCupo" value="${esc(cupoVac())}"></div>
-          <p class="err" id="cfgErr"></p>
-          <div><button class="btn primary" type="submit" id="cfgBtn">Guardar</button></div>
-        </form>
-        ${vu?`<p class="hint">Última ventana registrada en el archivo de vacaciones: del ${fmtL(parseISO(vu.desde))} al ${fmtL(parseISO(vu.hasta))}.</p>`:""}
-      </div>
-      <div class="card"><div class="row between" style="margin-bottom:8px"><div><h3>Solicitudes por revisar</h3>${pend.length?`<p class="hint" style="margin-top:2px">Ordenadas por prioridad: primero las que caben en el cupo, según escalafón.</p>`:""}</div><span class="pill ${pend.length?"warn":""}">${pend.length}</span></div>
-        ${revs.length?`<div style="margin-bottom:12px"><div class="row between" style="margin-bottom:6px"><h3>Revisiones pedidas</h3><span class="pill crit">${revs.length}</span></div><div class="obs">${revs.map(s=>solRow(s,false)).join("")}</div></div>`:""}
-        ${pend.length?`<div class="obs">${pend.map(s=>solRow(s,true)).join("")}</div>`:`<p class="empty">No hay solicitudes pendientes.</p>`}
-        ${dec.length?`<h3 style="margin:14px 0 8px">Últimas decididas</h3><div class="obs">${dec.map(s=>solRow(s,false)).join("")}</div>`:""}</div>
-    </div>
+    ${campanaAdmHTML()}
     ${doAdmHTML()}
     ${T.secciones}
     ${vacEquipoHTML()}
-    <p class="foot">Fuente: ${esc(VAC().fuente||"hoja Vacaciones")} (hojas Vacaciones, VacacionesDias y VacacionesBloques del Google Sheet base). El derecho de cada periodo viene de la hoja VacacionesPeriodos; los periodos sin dato suman 1 día por renovación hasta 45. Las solicitudes aprobadas cuentan como programadas.</p>
+    <p class="foot">Fuente: ${esc(VAC().fuente||"hoja Vacaciones")} (hojas Vacaciones, VacacionesDias y VacacionesBloques del Google Sheet base). El derecho de cada periodo viene de la hoja VacacionesPeriodos; los periodos sin dato suman 1 día por renovación hasta 45. Las prioridades asignadas en la solicitud de vacaciones pasan a VacacionesBloques como programadas.</p>
   </div>`;
 }
 

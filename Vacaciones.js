@@ -254,6 +254,8 @@ function apiEnviarSolicitudVac(token, dias, disp, comentario) {
   return responder_(() => {
     const u = sesion_(token).u;
     if (u.rol !== 'inst') throw falla_('Solo los instructores pueden solicitar vacaciones desde la app.');
+    // La solicitud de días sueltos se reemplazó por la solicitud por prioridades (CampanaVac.gs · apiEnviarPrioridadesVac)
+    throw falla_('Las vacaciones se solicitan eligiendo tus prioridades (P1 a P6) en la tarjeta «Solicitar vacaciones» de Mi rol.');
     const cfg = cfgVac_(), hoy = hoyISO_();
     if (!ventanaAbierta_(cfg, hoy)) throw falla_('La ventana de solicitud de vacaciones no está habilitada.');
     if (!Array.isArray(dias) || !dias.length) throw falla_('Elige al menos un día.');

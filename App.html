@@ -150,6 +150,7 @@ function aplicarDatos(P, mantener){
   S.vac=P.vac||{personas:{}, solicitudes:[], cfg:null, ventanaUltima:null, fuente:""}; resetVac();
   S.intercambios=P.intercambios||[]; S.intAprob=P.intAprob||null; S.intConFinal=!!P.intConFinal;
   S.do=P.do||null; S.selDO=null; S.doOpc=null;
+  S.camp=P.campana||null; S.cv=null; S.campSim=null;
   marcaRoles=P.cambioRoles||"";
   const [y,m,d]=P.hoy.split("-").map(Number); HOY=new Date(y,m-1,d,12);
   MO=construirModelo(P); STC={};
@@ -178,7 +179,7 @@ async function revisarCambios(){
   try{
     const r=await api("apiCambios");
     if(!r || r.roles===marcaRoles) return;
-    const ocupado=document.querySelector(".scrim") || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement||{}).tagName||"") || (S.selVac&&S.selVac.size) || S.selDO;
+    const ocupado=document.querySelector(".scrim") || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement||{}).tagName||"") || (S.selVac&&S.selVac.size) || S.selDO || S.cv;
     if(ocupado) return; // se reintenta en la próxima vuelta
     await recargar(); toast("El rol se actualizó");
   }catch(e){ /* sin conexión: se reintenta */ }
@@ -211,9 +212,15 @@ function render(){
   if(S.usuario && S.listo && S.mes){ const mP = MO.orden.includes(S.mes) ? S.mes : mesInicial(); if(mP) asignarPerfiles(MO, mP.slice(0,4)); }
   pintarCabecera();
   const app=$("#app");
+  // Los paneles con scroll propio (p. ej. la columna derecha de Mi rol) se recrean al redibujar: se guarda y restaura su posición
+  const SCROLLS=".rol-side,.side-nav,.scroll,.mx-wrap,.alerts,.status-list,.vesc", winY=window.scrollY;
+  const pos=[...app.querySelectorAll(SCROLLS)].map(el=>[el.className,el.scrollTop,el.scrollLeft]);
   if(!S.usuario) app.innerHTML=vistaLogin();
   else if(!S.listo) return;
   else app.innerHTML=vistaShell();
+  const nuevos=[...app.querySelectorAll(SCROLLS)];
+  pos.forEach(([cls,t,l],i)=>{ const el=nuevos[i]; if(el && el.className===cls && (t||l)){ el.scrollTop=t; el.scrollLeft=l; } });
+  if(window.scrollY!==winY) window.scrollTo(0,winY);
   document.body.classList.toggle("con-side", !!app.querySelector(".shell"));
   document.body.classList.remove("iniciando");
   document.body.classList.toggle("sin-sesion", !S.usuario);
@@ -528,6 +535,7 @@ function wire(){
   document.querySelectorAll("[data-messtep]").forEach(b=>b.onclick=()=>{ const L=listaMesesActual(); const i=L.indexOf(S.mes)+Number(b.dataset.messtep); if(L[i]) irAMes(L[i]); });
   wireVac();
   wireDO();
+  wireCampana();
   document.querySelectorAll("[data-side]").forEach(b=>b.onclick=()=>{ if(b.dataset.side==="mini") alternarMenu(); else cerrarMenuMovil(); });
   document.querySelectorAll("[data-sideact]").forEach(b=>b.onclick=()=>{ cerrarMenuMovil(); if(b.dataset.sideact==="salir") confirmarSalir(); else if(b.dataset.sideact==="preferencias") abrirPreferencias(); else abrirCambiarClave(); });
   document.querySelectorAll("[data-atab]").forEach(b=>b.onclick=()=>{ cerrarMenuMovil(); scrollTo(0,0); S.tab=b.dataset.atab; if(S.tab==="cargar"){ S.fuentes=null; S.fuentesMsg=""; } if(S.tab==="colores"){ S.tipos=null; S.colVista=null; S.colImport=null; } if(S.tab==="usuarios") S.adm=null; render(); });

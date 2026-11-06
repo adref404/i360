@@ -18,9 +18,12 @@ function vistaUsuario(bp, desdeAdmin){
   const enMes = !!pe.meses[mes];
   const mesesY=mesesDelAnio(mesF);
   const sM=ST(bp,[mesF]), anio=anioHasta(mesF), sA=ST(bp,anio), sY=ST(bp,mesesY), sMc=ST(bp,[mes]);
-  /* vacaciones: periodo DGAC vigente */
-  const vpU=vacPersona(bp); const pU=vpU?periodoVac(vpU,anioVig(vpU,HOY),HOY,extraDe(bp)):null;
-  const pRing=pU&&pU.der?Math.min(100,pU.tom/pU.der*100):0; const libresU=pU?pU.der-pU.tom-pU.prog-pU.sol:0;
+  /* HO del año (HO FILE, HO FILE TARDE, HO NWL…): llevados hasta hoy y los que faltan llevar según el rol publicado */
+  const hoy=isoD(HOY), hoRegs=[];
+  Object.keys(pe.meses).filter(m=>m.startsWith(String(miF.y))).sort().forEach(m=>pe.meses[m].forEach((x,i)=>{ if(x&&/^\s*HO\b/i.test(x.raw||"")) hoRegs.push({mes:m,d:i+1,x,k:isoD(new Date(Number(m.slice(0,4)),Number(m.slice(5))-1,i+1))}); }));
+  const hoHechos=hoRegs.filter(r=>r.k<=hoy).length, hoFaltan=hoRegs.length-hoHechos;
+  const hoTipos={}; hoRegs.forEach(r=>{ const t=String(r.x.raw).split("\n")[0].replace(/\(.*$/,"").trim().toUpperCase(); hoTipos[t]=(hoTipos[t]||0)+1; });
+  const hoRing=hoRegs.length?hoHechos/hoRegs.length*100:0;
   /* vuelos por mes del año */
   const porMes=mesesY.map(m=>({m,n:pe.meses[m]?ST(bp,[m]).vin:null, h:pe.meses[m]?ST(bp,[m]).vha:0}));
   const maxV=Math.max(4,...porMes.map(x=>(x.n||0)+x.h));
@@ -62,11 +65,12 @@ function vistaUsuario(bp, desdeAdmin){
     <button class="kpi" ${drill(()=>abrirDrill(`Vuelos de instrucción · ${esc(pe.nombre)}`,`${mesLargo(mesF)}`,sM.reg.filter(r=>r.x.k==="VIN")))}>
       <span class="l">Vuelos como instructor en ${miF.nombre}</span><span class="v num">${sM.vin}</span>
       <span class="d">${sA.vin} de enero a ${miF.nombre}${sM.vinWB||sM.vinNB?` · ${sM.vinWB} WB · ${sM.vinNB} NB`:""}</span><span class="go">Ver detalle</span></button>
-    <div class="kpi kvac" style="flex-direction:row;align-items:center;gap:14px">
-      ${pU?`<div class="ring" style="--p:${pRing}" aria-hidden="true"><div><b class="num">${Math.max(0,pU.der-pU.tom)}</b><small>por tomar</small></div></div>
-      <div><span class="l">Vacaciones · periodo ${pU.etiqueta}</span><div class="d" style="margin-top:4px">${pU.tom} tomados de ${pU.der} · ${pU.prog+pU.sol} programados</div>
-      <div style="font:700 20px/1.2 var(--f-display);margin-top:4px;color:${libresU<0?"var(--crit)":"var(--ink)"}">${libresU>=0?`${libresU} por programar`:`Excede en ${-libresU} días`}</div></div>`
-      :`<div><span class="l">Vacaciones</span><div class="d">Sin datos en la hoja Vacaciones.</div></div>`}</div>
+    <button class="kpi kvac" style="flex-direction:row;align-items:center;gap:14px;text-align:left" ${drill(()=>abrirDrill(`HO · ${esc(pe.nombre)}`,`${miF.y} · ${hoHechos} llevados · ${hoFaltan} por llevar`,hoRegs))}>
+      <div class="ring" style="--p:${hoRing}" aria-hidden="true"><div><b class="num">${hoHechos}</b><small>llevados</small></div></div>
+      <div><span class="l">HO · ${miF.y}</span><div class="d" style="margin-top:4px">${hoRegs.length?`${hoHechos} llevados de ${hoRegs.length} en el rol`:"Sin HO en el rol de este año"}</div>
+      ${hoRegs.length?`<div style="font:700 20px/1.2 var(--f-display);margin-top:4px;color:var(--ink)">${hoFaltan} por llevar</div>
+      <div class="d" style="margin-top:2px">${Object.keys(hoTipos).sort((a,b)=>hoTipos[b]-hoTipos[a]).map(t=>`${esc(t)} ${hoTipos[t]}`).join(" · ")}</div>`:""}
+      <span class="go">Ver HO</span></div></button>
     <button class="kpi" ${drill(()=>abrirDrill(`Viajes con viático · ${esc(pe.nombre)}`,`Enero a ${miF.nombre} ${miF.y}`,sA.reg.filter(r=>r.x.pernocta&&(r.x.k==="VIN"||r.x.k==="VHA"))))}>
       <span class="l">Viajes con viático (ene–${mesCorto(mesF)})</span><span class="v num">${sA.viajes}</span><span class="d">${sM.viajes} en ${miF.nombre} · pernocta fuera de Lima</span><span class="go">Ver viajes</span></button>
     <button class="kpi" ${drill(()=>abrirDrill(`Instrucción en tierra · ${esc(pe.nombre)}`,mesLargo(mesF),sM.reg.filter(r=>["IET","RES","AUD"].includes(r.x.k))))}>
@@ -85,7 +89,7 @@ function vistaUsuario(bp, desdeAdmin){
       ${enFreeze?`<div class="row between">${toggleColSheetHTML()}</div>`+codesHTML():`<div class="cal-legend"><span><i class="sw" style="background:var(--c-vac)"></i>Tomadas</span><span><i class="sw vp-sw"></i>Programadas</span><span><i class="sw vs-sw"></i>Solicitadas</span>${C.sel?`<span><i class="sw" style="background:var(--accent)"></i>Tu selección</span>`:""}</div>`}
       ${enFreeze?`<div style="border-top:1px solid var(--line);padding-top:12px"><h3 style="margin-bottom:10px">Resumen de ${mi.nombre}</h3>${statsBlock(sMc)}</div>`:""}
     </div>
-    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${solicitudCardHTML(bp,mes,desdeAdmin,C.sel)}${propio&&S.usuario.rol==="inst"?doCardHTML(bp)+abiertosCardHTML(bp):""}${intercambiosCardHTML(bp,desdeAdmin)}${vacHistHTML(bp)}</div>
+    <div class="stack rol-side">${enFreeze?obsBlock(bp,r,!propio):""}${propio&&S.usuario.rol==="inst"?campanaCardHTML(bp)+doCardHTML(bp)+abiertosCardHTML(bp):campanaCardHTML(bp,true)}${intercambiosCardHTML(bp,desdeAdmin)}</div>
   </div>
   <div class="u-grid" style="margin-top:16px">
     <div class="stack">

@@ -947,5 +947,30 @@ h3{font-weight:700}
 }
 /* Ambiente de prueba (solo en el proyecto con MODO = PRUEBA) */
 .franja-prueba{position:sticky;top:0;z-index:1000;background:repeating-linear-gradient(135deg,#FFD84D 0 14px,#FFE58A 14px 28px);color:#3D2E00;font:700 12px/1.2 var(--f-body,Lato,sans-serif);text-align:center;padding:6px 12px;letter-spacing:.2px}
+/* Campaña de vacaciones: línea de tiempo del mínimo (amarillo = periodo actual, verde = nuevo periodo) */
+.tl{display:flex;flex-direction:column;gap:2px;padding-top:4px}
+.tl-arriba,.tl-blq,.tl-acum,.tl-meses{position:relative}
+.tl-arriba{height:18px}
+.tl-ren{position:absolute;transform:translateX(-50%);white-space:nowrap;font-size:12px;font-weight:700;color:var(--ink)}
+.tl-blq{height:18px}
+.tl-b{position:absolute;top:2px;height:14px;border-radius:4px;background:var(--accent);color:var(--accent-ink);font:700 9.5px/14px var(--f-body);font-style:normal;text-align:center;overflow:hidden;white-space:nowrap}
+.tl-track{position:relative;height:30px;border-radius:8px;overflow:hidden;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line)}
+.tl-act,.tl-nue{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center}
+.tl-act{left:0;background:color-mix(in srgb,#f5d90a 60%,var(--surface))}
+.tl-nue{background:color-mix(in srgb,#2fa84f 50%,var(--surface))}
+.tl-act b,.tl-nue b{font-size:15px;color:var(--ink)}
+.tl-corte{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink);transform:translateX(-1px)}
+.tl-acum{height:15px}
+.tl-acum span{position:absolute;transform:translateX(-50%);font-size:10px;font-weight:600;color:color-mix(in srgb,#2fa84f 70%,var(--ink))}
+.tl-meses{height:26px;border-top:1px solid var(--line)}
+.tl-meses span{position:absolute;padding-left:3px;border-left:1px solid var(--line);font-size:10.5px;color:var(--muted);line-height:1.15}
+.tl-meses small{display:block;font-size:9.5px;font-weight:700}
+.per-ley{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);margin-top:4px}
+.per-ley i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.per-ley i.act{background:#f5d90a} .per-ley i.nue{background:#2fa84f}
+@media (max-width:600px){ .tl-meses span{font-size:9px} .tl-acum span:nth-child(even){display:none} }
+/* Solicitar vacaciones: etiqueta de cada prioridad */
+.pn{display:inline-block;min-width:26px;padding:1px 6px;margin-right:4px;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-size:12px;text-align:center}
+.pn-1{margin-left:6px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-size:11px;font-weight:700}
 #fin-estilos{--fin:1}
 </style>

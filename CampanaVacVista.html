@@ -1,0 +1,201 @@
+<script>
+/* CampanaVacVista — "Solicitar vacaciones": la única forma de pedir vacaciones, por prioridades (reglas en CampanaVac.gs).
+   Instructor (Mi rol): arma hasta 6 bloques, de Prioridad 1 (la más importante) a Prioridad 6, en el calendario (toca el
+   primer día y luego el último), sin cruzarlos ni pisar vacaciones, hasta llegar a sus días mínimos, y los envía.
+   Coordinación (pestaña Vacaciones): abre la solicitud, ve quién envió, simula la asignación por rondas (escalafón + cupo
+   diario) y la aplica. Datos en S.camp. */
+
+const CAMP = () => S.camp || {cfg:{}, abierta:false, max:6, minimos:{}, prioridades:[]};
+const MESES_CAMP = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const fCorta = iso => { const d=parseISO(iso); return `${d.getDate()} ${MESES_CAMP[d.getMonth()].slice(0,3)}${d.getFullYear()!==HOY.getFullYear()?" "+d.getFullYear():""}`; };
+/* "29 de octubre" (con año: "20 de octubre de 2027") */
+const fDia = (iso, conAnio) => { const d=parseISO(iso); return `${d.getDate()} de ${MESES_CAMP[d.getMonth()]}${conAnio?" de "+d.getFullYear():""}`; };
+const masDia = (iso,n) => { const d=parseISO(iso); d.setDate(d.getDate()+n); return isoD(d); };
+const diasRango = (a,b) => { const out=[]; for(let k=a;k<=b;k=masDia(k,1)) out.push(k); return out; };
+const fdsDe = dias => dias.filter(k=>{ const w=parseISO(k).getDay(); return w===0||w===6; }).length;
+/* R2 (igual que extenderViernes_ en el servidor): si termina un viernes, se suman sábado y domingo */
+const extViernes = (hasta, fin) => parseISO(hasta).getDay()===5 && masDia(hasta,2)<=fin ? masDia(hasta,2) : hasta;
+const misPrios = bp => CAMP().prioridades.filter(p=>p.bp===bp).sort((a,b)=>a.prioridad-b.prioridad);
+function ocupadosCamp(bp){ const s=new Set(); const vp=vacPersona(bp); if(vp) for(const k of vp.fechas.keys()) s.add(k); extraDe(bp).aprob.forEach(k=>s.add(k)); return s; }
+/* Nombre visible de cada prioridad: el instructor debe ver claro cuál es su 1, su 2… */
+const nomPrio = i => `<span class="pn">P${i}</span> Prioridad ${i}${i===1?` <span class="pn-1">la más importante</span>`:""}`;
+const ESTADO_PRIO = {enviada:["info","Enviada"], asignada:["good","Asignada"], no_asignada:["crit","No asignada"]};
+const pillPrio = p => { const [c,t]=ESTADO_PRIO[p.estado]||["",p.estado]; return `<span class="pill ${c}"><i></i>${t}</span>`; };
+function barraMin(total, min){ const pct=min?Math.min(100,total/min*100):0, ok=total>=min;
+  return `<div class="row between" style="margin-bottom:4px"><span><b class="num">${total}</b> / ${min} días</span><span class="pill ${ok?"good":"warn"}"><i></i>${ok?"Días cubiertos":`Faltan ${min-total}`}</span></div>
+    <div class="vbar"><span style="flex:${pct};background:var(${ok?"--good":"--warn"})"></span><span class="vl" style="flex:${100-pct}"></span></div>`; }
+
+/* Línea de tiempo de la ventana de vacaciones (p. ej. 1 ene → 31 dic 2027) con la fecha de renovación del instructor
+   marcada encima, como la planilla VACACIONES v2: amarillo = periodo actual, por cumplir hasta la renovación (J) ·
+   verde = nuevo periodo desde la renovación, que se va sumando mes a mes (meta ÷ 12). Encima se ven los bloques P1, P2…
+   La renovación que se muestra es la primera dentro de la ventana; los días del Excel solo se muestran si corresponden a esa fecha. */
+function renovacionEn(m, bp, ini, fin){
+  const base=m.aniversario ? parseISO(m.aniversario) : (()=>{ const vp=vacPersona(bp); return vp?new Date(2000,vp.mm-1,vp.dd):null; })();
+  if(!base) return "";
+  const y0=Number(ini.slice(0,4));
+  for(let y=y0; y<=y0+2; y++){ const k=isoD(new Date(y, base.getMonth(), base.getDate())); if(k>=ini) return k<=fin?k:""; }
+  return "";
+}
+function barraPeriodos(m, bloques, ini, fin, bp){
+  if(!ini || !fin) return "";
+  const ren=renovacionEn(m, bp, ini, fin), cuadra=!!ren && m.actual!=null && m.aniversario===ren;
+  // El verde llega hasta el día antes del siguiente aniversario (aunque pase del fin de la solicitud)
+  const sigAni=ren?(()=>{ const d=parseISO(ren); return isoD(new Date(d.getFullYear()+1,d.getMonth(),d.getDate()-1)); })():"";
+  const finBarra=sigAni&&sigAni>fin?sigAni:fin;
+  const t0=parseISO(ini).getTime(), t1=parseISO(finBarra).getTime()+864e5, pos=iso=>Math.max(0,Math.min(100,(parseISO(iso).getTime()-t0)/(t1-t0)*100));
+  const pr=ren?pos(ren):100, fRen=ren?fmtL(parseISO(ren)):"";
+  const meses=[]; const d0=parseISO(ini); d0.setDate(1);
+  for(let d=new Date(d0); isoD(d)<=finBarra; d.setMonth(d.getMonth()+1)){ const k=isoD(d); if(k>=ini) meses.push({p:pos(k), t:MESES_CAMP[d.getMonth()].slice(0,3), anio:d.getMonth()===0||k===ini?d.getFullYear():""}); }
+  const dias=[]; (bloques||[]).forEach(b=>dias.push(...diasRango(b.desde,b.hasta)));
+  const antes=ren?dias.filter(k=>k<ren).length:dias.length, despues=dias.length-antes;
+  const marcas=(bloques||[]).map((b,i)=>{ const a=pos(b.desde), w=Math.max(0.6,pos(masDia(b.hasta,1))-a); return `<i class="tl-b" style="left:${a}%;width:${w}%" title="Prioridad ${i+1}: ${esc(fCorta(b.desde))} → ${esc(fCorta(b.hasta))}">P${i+1}</i>`; }).join("");
+  const alinear=pr<14?"transform:none":pr>86?"transform:translateX(-100%)":"";
+  const finAct=ren?fmtL(new Date(parseISO(ren).getTime()-864e5)):"";
+  return `<div class="tl">
+    <div class="tl-arriba">${ren?`<span class="tl-ren" style="left:${pr}%;${alinear}">Renueva ${esc(fRen)}</span>`:""}</div>
+    <div class="tl-blq">${marcas}</div>
+    <div class="tl-track">
+      ${pr>0?`<div class="tl-act" style="width:${pr}%">${cuadra?`<b class="num">${m.actual}</b>`:""}</div>`:""}
+      ${pr<100?`<div class="tl-nue" style="left:${pr}%;width:${100-pr}%">${cuadra?`<b class="num">${m.nuevo}</b>`:""}</div>`:""}
+      ${ren?`<span class="tl-corte" style="left:${pr}%"></span>`:""}
+    </div>
+    <div class="tl-meses">${meses.map(x=>`<span style="left:${x.p}%">${x.t}${x.anio?`<small>${x.anio}</small>`:""}</span>`).join("")}</div>
+    <div class="per-ley">
+      <span><i class="act"></i>Periodo actual${ren?` (hasta el ${esc(finAct)})`:""}${cuadra?`: <b>${m.actual}</b> días por cumplir`:""} · elegidos ${antes}</span>
+      ${ren?`<span><i class="nue"></i>Nuevo periodo (${esc(fRen)} al ${esc(fmtL(parseISO(sigAni)))})${cuadra?`: <b>${m.nuevo}</b> días`:""} · elegidos ${despues}</span>`:""}
+    </div>
+    ${cuadra&&m.actual<0?`<p class="hint">El periodo actual está en ${m.actual} días (adelantados).</p>`:""}
+  </div>`;
+}
+
+/* ============ Instructor (Mi rol) ============ */
+function campanaCardHTML(bp, soloVer){
+  const C=CAMP(), c=C.cfg||{}, m=C.minimos[bp], mias=misPrios(bp);
+  const estado=`<span class="pill ${C.abierta?"good":""}"><i></i>${C.abierta?"Abierta":"Cerrada"}</span>`;
+  if(!m){ if(soloVer || !C.abierta) return "";
+    return `<div class="card stack" style="gap:10px"><div class="row between"><h3>Solicitar vacaciones</h3>${estado}</div><p class="hint">Coordinación todavía no cargó tus días de vacaciones, así que aún no puedes enviar tu solicitud. Escríbeles para que lo revisen.</p></div>`; }
+  const enviadas=mias.length&&mias.every(p=>p.estado==="enviada"), asignado=mias.some(p=>p.estado!=="enviada");
+  const editando=!soloVer && C.abierta && !asignado && (S.cv || !mias.length);
+  const tu=soloVer?"sus":"tus", ren=renovacionEn(m,bp,c.inicio,c.fin);
+  const cab=`<div class="row between"><h3>Solicitar vacaciones</h3>${estado}</div>
+    <p>Te compartimos el formulario de intención de vacaciones${c.desde||c.hasta?`, el cual estará disponible${c.desde?` desde el <b>${esc(fDia(c.desde))}</b>`:""}${c.hasta?` hasta el <b>${esc(fDia(c.hasta))}</b>`:""}`:""}, para ingresar tus intenciones de ${c.inicio.slice(0,4)===c.fin.slice(0,4)?`todo el <b>${c.inicio.slice(0,4)}</b>`:`<b>${esc(fDia(c.inicio,1))}</b> a <b>${esc(fDia(c.fin,1))}</b>`}. Si tu intención de vacaciones contempla las dos primeras semanas de enero, el plazo máximo para registrarlas será el <b>${esc(fDia(c.plazoEnero||"2026-11-08").padStart(2,"0").replace(/^(\d) /,"0$1 "))}</b>.</p>
+    <div class="note"><b>HIGHLIGHT:</b> De acuerdo a la proyección de actividades de instrucción ${c.fin.slice(0,4)}, hemos detectado que los meses con mayor demanda de instructores corresponden a: <b>${esc(c.alta||"Abril y Octubre")}</b>.</div>
+    ${ren?`<p>Tu período de vacaciones se renueva el <b>${esc(fDia(ren,1))}</b>, recuerda que debes tomar como MÍNIMO la cantidad de días que figura en la barra amarilla hasta un día antes de esa fecha indicada.</p>`:""}
+    <p class="hint">Elige hasta ${C.max} bloques de prioridades, de <b>Prioridad 1</b> (la más importante) a Prioridad ${C.max}.</p>`;
+  const barra=bloques=>barraPeriodos(m,bloques,c.inicio,c.fin,bp);
+  if(editando){ if(!S.cv) S.cv={bloques:mias.map(p=>({desde:p.desde,hasta:p.hasta})), mes:(mias[0]?mias[0].desde:c.inicio).slice(0,7), ini:null, com:(mias[0]||{}).comentario||""};
+    return `<div class="card stack" style="gap:10px">${cab}${barra(S.cv.bloques)}${editorCampHTML(bp,m.minimo)}</div>`; }
+  if(!mias.length) return `<div class="card stack" style="gap:10px">${cab}${barra([])}<p class="hint">${soloVer?"Aún no envía su solicitud.":"La solicitud no está abierta. Cuando coordinación la abra, aquí podrás elegir tus prioridades."}</p></div>`;
+  const total=mias.reduce((s,p)=>s+p.dias,0);
+  return `<div class="card stack" style="gap:10px">${cab}${barra(mias)}${barraMin(total,m.minimo)}
+    <div class="obs">${mias.map(p=>`<div class="obs-item solv"><div class="h"><b>${nomPrio(p.prioridad)}</b>${pillPrio(p)}</div>
+      <p><b>${esc(fCorta(p.desde))} → ${esc(fCorta(p.hasta))}</b></p><span class="hint">${plural(p.dias,"día")} · ${plural(p.fds,"día","días")} de fin de semana${p.resultado?` · ${esc(p.resultado)}`:""}</span></div>`).join("")}</div>
+    ${mias[0]&&mias[0].comentario?`<div class="cmt"><b>${soloVer?"Comentario":"Tu comentario"}:</b> ${esc(mias[0].comentario)}</div>`:""}
+    ${!soloVer&&C.abierta&&enviadas?`<div class="row"><button class="btn sm primary" data-cvedit="1">Editar y reenviar</button><button class="btn sm" data-cvretirar="1">Retirar solicitud</button></div>`:""}
+    ${asignado?`<p class="hint">Las prioridades asignadas ya figuran como vacaciones programadas.</p>`:""}</div>`;
+}
+function editorCampHTML(bp, min){
+  const C=CAMP(), c=C.cfg, E=S.cv, ocup=ocupadosCamp(bp);
+  const enP={}; E.bloques.forEach((b,i)=>diasRango(b.desde,b.hasta).forEach(k=>{ enP[k]=i+1; }));
+  const total=E.bloques.reduce((s,b)=>s+diasRango(b.desde,b.hasta).length,0);
+  // Calendario del mes que se está viendo
+  const [y,mm]=E.mes.split("-").map(Number), nd=new Date(y,mm,0).getDate(), lleno=E.bloques.length>=C.max;
+  const tiles=[]; const off=(new Date(y,mm-1,1).getDay()+6)%7; for(let k=0;k<off;k++) tiles.push("<div></div>");
+  for(let d=1; d<=nd; d++){
+    const k=isoD(new Date(y,mm-1,d)), w=new Date(y,mm-1,d).getDay(), fds=(w===0||w===6)?"fds":"";
+    const fuera=k<c.inicio||k>c.fin||k<=S.hoy, vac=ocup.has(k), p=enP[k], esIni=E.ini===k;
+    const pick=!fuera&&!vac&&!p&&!lleno;
+    const cls=esIni?"k-SEL":p?"k-SOL":vac?"k-VAC":"k-NO";
+    tiles.push(`<button class="tile ${cls} ${fds} ${pick?"pick":""}" ${pick?`data-cvpick="${k}"`:'tabindex="-1"'} aria-label="${d}${p?": prioridad "+p:vac?": vacaciones":""}">
+      <span class="d num">${d}</span><span class="c"><span>${esIni?"Inicio":p?"P"+p:vac?"Vac.":""}</span><small>${esIni?"→ fin":""}</small></span></button>`);
+  }
+  const mIni=c.inicio.slice(0,7), mFin=c.fin.slice(0,7);
+  const nav=`<div class="row between"><button class="btn sm" data-cvmes="-1" ${E.mes<=mIni?"disabled":""}>‹</button><b>${cap(MESES_CAMP[mm-1])} ${y}</b><button class="btn sm" data-cvmes="1" ${E.mes>=mFin?"disabled":""}>›</button></div>`;
+  const lista=E.bloques.length?`<div class="obs">${E.bloques.map((b,i)=>{ const ds=diasRango(b.desde,b.hasta);
+      return `<div class="obs-item solv"><div class="h"><b>${nomPrio(i+1)}</b><span class="row" style="gap:4px">${i?`<button class="btn sm" data-cvsube="${i}" title="Subir a Prioridad ${i}">↑</button>`:""}<button class="btn sm" data-cvquita="${i}" title="Quitar">✕</button></span></div>
+        <p><b>${esc(fCorta(b.desde))} → ${esc(fCorta(b.hasta))}</b></p><span class="hint">${plural(ds.length,"día")} · ${plural(fdsDe(ds),"día","días")} de fin de semana${b.ext?" · se sumaron sábado y domingo (termina viernes)":""}</span></div>`; }).join("")}</div>`
+    :`<p class="hint">Todavía no eliges tu Prioridad 1.</p>`;
+  const ok=E.bloques.length>0 && total>=min && (!c.tope||total<=c.tope);
+  return `${barraMin(total,min)}${lista}
+    <div class="selpanel ${lleno?"":"empty"}"><b>${lleno?`Ya elegiste tus ${C.max} prioridades`:E.ini?`Ahora toca el último día de tu Prioridad ${E.bloques.length+1}`:`Toca el primer día de tu Prioridad ${E.bloques.length+1}${E.bloques.length?"":" (la más importante)"}`}</b>
+      <span class="hint">${lleno?"Quita uno para cambiarlo.":"Los días en gris ya tienen vacaciones o están en otra prioridad."}${E.ini?` <button class="btn link-btn" data-cvcancelini="1">Cancelar</button>`:""}</span></div>
+    ${nav}<div class="cal">${["lun","mar","mié","jue","vie","sáb","dom"].map(d=>`<div class="dow">${d}</div>`).join("")}${tiles.join("")}</div>
+    <div class="field"><label for="cvCom">Comentario para coordinación <span class="hint">(opcional)</span></label><textarea class="input" id="cvCom" maxlength="500" rows="2">${esc(E.com||"")}</textarea></div>
+    <p class="err" id="cvErr"></p>
+    <div class="row"><button class="btn primary" data-cvenviar="1" ${ok?"":"disabled"}>${misPrios(bp).length?"Reenviar solicitud":"Enviar solicitud"}</button>${misPrios(bp).length?`<button class="btn" data-cvdescartar="1">Descartar cambios</button>`:""}</div>
+    ${!ok&&E.bloques.length?`<p class="hint">${total<min?`Te faltan ${min-total} días por elegir.`:`Coordinación fijó un máximo de ${c.tope} días por instructor y elegiste ${total}. Pide a coordinación que revise ese tope.`}</p>`:""}`;
+}
+/* Agrega el bloque inicio→fin si no cruza otra prioridad ni vacaciones (el servidor vuelve a validarlo) */
+function agregarBloqueCamp(bp, fin){
+  const E=S.cv, c=CAMP().cfg, a=E.ini<fin?E.ini:fin, b0=E.ini<fin?fin:E.ini, b=extViernes(b0,c.fin);
+  const ocup=ocupadosCamp(bp), usados=new Set(); E.bloques.forEach(x=>diasRango(x.desde,x.hasta).forEach(k=>usados.add(k)));
+  const choca=diasRango(a,b).find(k=>usados.has(k)||ocup.has(k)||k>c.fin);
+  if(choca){ E.ini=null; toast(`El ${fmtL(parseISO(choca))} ya está ocupado: elige otro rango.`); return; }
+  E.bloques.push({desde:a, hasta:b, ext:b!==b0}); E.ini=null;
+}
+
+/* ============ Coordinación (pestaña Vacaciones) ============ */
+function campanaAdmHTML(){
+  const C=CAMP(), c=C.cfg||{}, puedo=gestiona("vac"), dis=puedo?"":"disabled";
+  const bps=Object.keys(C.minimos).sort((a,b)=>String(C.minimos[a].nombre).localeCompare(String(C.minimos[b].nombre),"es"));
+  const env=bps.filter(bp=>misPrios(bp).length).length;
+  const filas=bps.map(bp=>{ const m=C.minimos[bp], l=misPrios(bp), total=l.reduce((s,p)=>s+p.dias,0);
+    const est=!l.length?`<span class="pill">Sin enviar</span>`:l.some(p=>p.estado!=="enviada")?`<span class="pill good"><i></i>${l.filter(p=>p.estado==="asignada").length}/${l.length} asignadas</span>`:`<span class="pill info"><i></i>Enviada</span>`;
+    return `<tr><td><b>${esc((MO.personas[bp]||{}).nombre||m.nombre)}</b></td><td class="num">${m.minimo}${m.actual!=null?`<span class="sm2">amarillo ${m.actual} · verde ${m.nuevo} · renueva ${esc(fCorta(m.aniversario))}</span>`:""}</td><td class="num">${l.length?total:"—"}</td><td>${est}</td>
+      <td style="white-space:normal">${l.map(p=>`<span class="sm2" title="${esc(p.resultado||"")}">P${p.prioridad} ${esc(fCorta(p.desde))}→${esc(fCorta(p.hasta))} (${p.dias})${p.estado==="asignada"?" ✓":p.estado==="no_asignada"?" ✗":""}</span>`).join("")}</td></tr>`; }).join("");
+  const sim=S.campSim;
+  const simHTML=sim?`<div class="card stack" style="gap:10px"><div class="row between"><h3>Simulación de la asignación</h3><span class="pill"><i></i>Cupo ${sim.cupo} por día</span></div>
+      <p class="hint">Ronda 1 = la P1 de todos por escalafón; luego la P2, y así. Si un bloque supera el cupo en algún día no se asigna y la persona sigue con su siguiente prioridad. Todavía no se guardó nada.</p>
+      ${sim.plan.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Ronda</th><th>Escalafón</th><th>Instructor</th><th>Fechas</th><th>Días</th><th>Resultado</th></tr></thead><tbody>
+        ${sim.plan.map(x=>`<tr><td>P${x.prioridad}</td><td class="num">#${x.escalafon}</td><td>${esc((MO.personas[x.bp]||{}).nombre||x.nombre)}</td><td>${esc(fCorta(x.desde))} → ${esc(fCorta(x.hasta))}</td><td class="num">${x.dias}</td>
+          <td>${x.asignada?`<span class="pill good"><i></i>Asignada</span>`:`<span class="pill crit"><i></i>No asignada</span><span class="sm2">${esc(x.motivo)}</span>`}</td></tr>`).join("")}</tbody></table></div>
+        <p><b>${sim.plan.filter(x=>x.asignada).length}</b> de ${sim.plan.length} bloques se asignarían.</p>
+        ${puedo?`<div class="row"><button class="btn primary" data-campaplicar="1" ${C.abierta?"disabled":""}>Aplicar asignación</button>${C.abierta?`<span class="hint">Cierra la solicitud para poder aplicarla.</span>`:""}</div>`:""}`
+      :`<p class="empty">No hay prioridades pendientes de asignar.</p>`}</div>`:"";
+  return `<div class="card stack" style="gap:12px" id="vcamp">
+    <div class="row between"><h3>Solicitud de vacaciones</h3><span class="pill ${C.abierta?"good":""}"><i></i>${C.abierta?"Abierta":"Cerrada"}</span></div>
+    <p class="hint">Cada instructor elige hasta ${C.max} bloques ordenados de Prioridad 1 (la más importante) a Prioridad ${C.max} entre el ${esc(fmtL(parseISO(c.inicio||"2026-11-01")))} y el ${esc(fmtL(parseISO(c.fin||"2027-12-31")))}, sin cruzarlos ni pisar vacaciones, hasta cubrir sus días mínimos (hoja VacacionesMinimos). Al aplicar la asignación, los bloques asignados pasan a VacacionesBloques como programados.</p>
+    <form id="fCamp" class="stack" style="gap:10px" novalidate>
+      <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="cpOn" ${c.habilitado?"checked":""} ${dis}> Solicitud abierta (los instructores pueden enviar y corregir)</label>
+      <div class="grid2e" style="gap:10px"><div class="field"><label for="cpDesde">Envíos desde</label><input class="input" type="date" id="cpDesde" value="${esc(c.desde||"")}" ${dis}></div><div class="field"><label for="cpHasta">Envíos hasta</label><input class="input" type="date" id="cpHasta" value="${esc(c.hasta||"")}" ${dis}></div></div>
+      <div class="grid2e" style="gap:10px"><div class="field"><label for="cpIni">Vacaciones desde</label><input class="input" type="date" id="cpIni" value="${esc(c.inicio||"")}" ${dis}></div><div class="field"><label for="cpFin">Vacaciones hasta</label><input class="input" type="date" id="cpFin" value="${esc(c.fin||"")}" ${dis}></div></div>
+      <div class="grid2e" style="gap:10px"><div class="field"><label for="cpEnero">Plazo para pedir las dos primeras semanas de enero</label><input class="input" type="date" id="cpEnero" value="${esc(c.plazoEnero||"2026-11-08")}" ${dis}></div>
+        <div class="field"><label for="cpAlta">Meses de mayor demanda de instructores</label><input class="input" type="text" maxlength="120" id="cpAlta" value="${esc(c.alta||"Abril y Octubre")}" ${dis}></div></div>
+      <div class="field" style="max-width:260px"><label for="cpCupo">Cupo por día (instructores de vacaciones a la vez)</label><input class="input" type="number" min="1" max="20" id="cpCupo" value="${esc(cupoVac())}" ${dis}></div>
+      <div class="field" style="max-width:260px"><label for="cpTope">Máximo total de días que puede pedir cada instructor (0 = sin tope · no es el cupo diario)</label><input class="input" type="number" min="0" max="400" id="cpTope" value="${esc(c.tope||0)}" ${dis}></div>
+      <p class="err" id="cpErr"></p>
+      ${puedo?`<div><button class="btn primary" type="submit" id="cpBtn">Guardar</button></div>`:""}
+    </form>
+    <div class="row between"><b>${env} de ${bps.length} instructores enviaron su solicitud</b><button class="btn sm" data-campsim="1">Simular asignación</button></div>
+    ${bps.length?`<div class="dt-wrap"><table class="dt"><thead><tr><th>Instructor</th><th>Mínimo</th><th>Elegidos</th><th>Estado</th><th>Prioridades</th></tr></thead><tbody>${filas}</tbody></table></div>`:`<p class="empty">La hoja VacacionesMinimos no tiene datos.</p>`}
+  </div>${simHTML}`;
+}
+
+function wireCampana(){
+  const bp=S.usuario&&S.usuario.bp, E=S.cv;
+  const c=document.getElementById("cvCom"); if(c) c.oninput=()=>{ if(S.cv) S.cv.com=c.value; };
+  document.querySelectorAll("[data-cvpick]").forEach(b=>b.onclick=()=>{ const k=b.dataset.cvpick; if(!E.ini) E.ini=k; else agregarBloqueCamp(bp,k); render(); });
+  document.querySelectorAll("[data-cvcancelini]").forEach(b=>b.onclick=()=>{ E.ini=null; render(); });
+  document.querySelectorAll("[data-cvmes]").forEach(b=>b.onclick=()=>{ const [y,m]=E.mes.split("-").map(Number), d=new Date(y,m-1+Number(b.dataset.cvmes),1); E.mes=isoD(d).slice(0,7); render(); });
+  document.querySelectorAll("[data-cvquita]").forEach(b=>b.onclick=()=>{ E.bloques.splice(Number(b.dataset.cvquita),1); render(); });
+  document.querySelectorAll("[data-cvsube]").forEach(b=>b.onclick=()=>{ const i=Number(b.dataset.cvsube); [E.bloques[i-1],E.bloques[i]]=[E.bloques[i],E.bloques[i-1]]; render(); });
+  document.querySelectorAll("[data-cvedit]").forEach(b=>b.onclick=()=>{ S.cv=null; const mias=misPrios(bp); S.cv={bloques:mias.map(p=>({desde:p.desde,hasta:p.hasta})), mes:mias[0].desde.slice(0,7), ini:null, com:mias[0].comentario||""}; render(); });
+  document.querySelectorAll("[data-cvdescartar]").forEach(b=>b.onclick=()=>{ S.cv=null; render(); });
+  document.querySelectorAll("[data-cvenviar]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Enviando…");
+    try{ const r=await api("apiEnviarPrioridadesVac",S.token,E.bloques.map(x=>({desde:x.desde,hasta:x.hasta})),E.com||"",dispositivo()); S.camp=r.campana; S.cv=null; toast("Solicitud de vacaciones enviada a coordinación"); render(); }
+    catch(e){ setCargando(b,false); const el=document.getElementById("cvErr"); if(el) el.textContent=e.message; } });
+  document.querySelectorAll("[data-cvretirar]").forEach(b=>b.onclick=async()=>{ if(!confirm("¿Retirar tu solicitud de vacaciones? Podrás enviarla de nuevo mientras la solicitud siga abierta.")) return; setCargando(b,true,"…");
+    try{ const r=await api("apiRetirarPrioridadesVac",S.token); S.camp=r.campana; S.cv=null; toast("Solicitud retirada"); render(); }catch(e){ setCargando(b,false); toast(e.message); } });
+  const f=document.getElementById("fCamp"); if(f) f.onsubmit=async e=>{ e.preventDefault(); const b=document.getElementById("cpBtn"); if(!b) return; setCargando(b,true,"Guardando…");
+    const v=id=>document.getElementById(id).value;
+    try{ S.camp=await api("apiGuardarCfgCamp",S.token,{habilitado:document.getElementById("cpOn").checked,desde:v("cpDesde"),hasta:v("cpHasta"),inicio:v("cpIni"),fin:v("cpFin"),tope:v("cpTope"),cupo:v("cpCupo"),plazoEnero:v("cpEnero"),alta:v("cpAlta")}); S.campSim=null; toast("Solicitud de vacaciones guardada"); render(); }
+    catch(err){ setCargando(b,false); document.getElementById("cpErr").textContent=err.message; } };
+  document.querySelectorAll("[data-campsim]").forEach(b=>b.onclick=async()=>{ setCargando(b,true,"Simulando…");
+    try{ S.campSim=await api("apiSimularAsignacionVac",S.token); render(); }catch(e){ setCargando(b,false); toast(e.message); } });
+  document.querySelectorAll("[data-campaplicar]").forEach(b=>b.onclick=async()=>{ if(!confirm("¿Aplicar la asignación? Los bloques asignados quedarán como vacaciones programadas y se avisará por correo a cada instructor.")) return;
+    setCargando(b,true,"Aplicando…");
+    try{ S.camp=await api("apiAplicarAsignacionVac",S.token); S.campSim=null; toast("Asignación aplicada"); await recargar(); }catch(e){ setCargando(b,false); toast(e.message); } });
+}
+
+window.__archivos=(window.__archivos||{}); window.__archivos["CampanaVacVista"]=true;
+</script>
